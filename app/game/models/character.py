@@ -38,6 +38,12 @@ class Character(BaseModel):
     wanted_level: int = 0
     health: int = 100
     max_health: int = 100
+    # Multi-Track Faction Reputation (-100 to +100)
+    reputation_marine: int = Field(default=0, ge=-100, le=100)
+    reputation_pirate: int = Field(default=0, ge=-100, le=100)
+    reputation_merchant: int = Field(default=0, ge=-100, le=100)
+    reputation_independent: int = Field(default=0, ge=-100, le=100)
+    specialization: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     died_at: Optional[datetime] = None
 
