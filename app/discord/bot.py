@@ -53,6 +53,9 @@ class PirateWarsBot(commands.Bot):
         self.tree.add_command(ship_group)
         from app.discord.commands.admin_commands import admin_group
         self.tree.add_command(admin_group)
+        from app.discord.commands.help_commands import ginto_command, help_command
+        self.tree.add_command(ginto_command)
+        self.tree.add_command(help_command)
         
         # Sync slash commands with Discord
         try:
