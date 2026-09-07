@@ -34,24 +34,32 @@ class GeminiAIProvider(AIProvider):
         system_instruction: str = "",
         model: Optional[str] = None
     ) -> T:
-        model_name = model or settings.GEMINI_MODEL_FAST
+        primary_model = model or settings.GEMINI_MODEL_FAST
+        candidate_models = [primary_model]
+        for fallback_m in ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.5-flash-lite"]:
+            if fallback_m not in candidate_models:
+                candidate_models.append(fallback_m)
 
         if self._client:
-            try:
-                config = types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    response_mime_type="application/json",
-                    response_schema=schema,
-                    temperature=0.2
-                )
-                response = self._client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=config
-                )
-                return schema.model_validate_json(response.text)
-            except Exception as e:
-                logger.error(f"Gemini API structured output error: {e}. Falling back to deterministic resolver.")
+            last_err = None
+            for candidate in candidate_models:
+                try:
+                    config = types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        response_mime_type="application/json",
+                        response_schema=schema,
+                        temperature=0.2
+                    )
+                    response = self._client.models.generate_content(
+                        model=candidate,
+                        contents=prompt,
+                        config=config
+                    )
+                    return schema.model_validate_json(response.text)
+                except Exception as e:
+                    last_err = e
+                    continue
+            logger.error(f"Gemini API structured output error across all models: {last_err}. Falling back to deterministic resolver.")
 
         # Deterministic Heuristic Fallback
         return self._heuristic_fallback(prompt, schema)
@@ -62,22 +70,24 @@ class GeminiAIProvider(AIProvider):
         system_instruction: str = "",
         model: Optional[str] = None
     ) -> str:
-        model_name = model or settings.GEMINI_MODEL_FAST
+        primary_model = model or settings.GEMINI_MODEL_FAST
+        candidate_models = [primary_model, "gemini-3.6-flash", "gemini-flash-latest", "gemini-3.5-flash-lite"]
 
         if self._client:
-            try:
-                config = types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.7
-                )
-                response = self._client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=config
-                )
-                return response.text
-            except Exception as e:
-                logger.error(f"Gemini API text generation error: {e}.")
+            for candidate in candidate_models:
+                try:
+                    config = types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.7
+                    )
+                    response = self._client.models.generate_content(
+                        model=candidate,
+                        contents=prompt,
+                        config=config
+                    )
+                    return response.text
+                except Exception as e:
+                    continue
 
         return "The ocean winds howl across the docks as waves crash against the weathered wooden pilings."
 
@@ -90,34 +100,85 @@ class GeminiAIProvider(AIProvider):
             # Determine action feasibility heuristically
             is_feasible = True
             rejection = None
-            if "teleport" in prompt_lower or "impossible" in prompt_lower or "god" in prompt_lower or "moon" in prompt_lower:
+            if any(k in prompt_lower for k in ["teleport", "impossible", "god", "moon", "1,000,000", "10,000,000", "grant this character"]):
                 is_feasible = False
                 rejection = "Action defies physical and world law constraints."
 
-            action_type = "FREEFORM"
-            if any(k in prompt_lower for k in ["steal", "pocket", "pilfer", "take", "loot"]):
-                action_type = "STEAL"
+            action_type = "EXPLORE"
+            difficulty = "MODERATE"
+            chance = 70
+            gold = 0
+            items_summary = None
+            health_delta = 0
+            wanted_delta = 0
+            rep_faction = None
+            rep_delta = 0
+            narrative = "You assess your surroundings and take action amidst the bustling colonial harbor."
+
+            if not is_feasible:
+                outcome = "FAILURE"
+                narrative = rejection
+            elif any(k in prompt_lower for k in ["job", "work", "labor", "hire", "employment", "earn", "unload", "haul", "clean"]):
+                action_type = "LABOR_WORK"
+                difficulty = "EASY"
+                chance = 85
+                outcome = "SUCCESS"
+                gold = 35
+                rep_faction = "merchant"
+                rep_delta = 2
+                narrative = "You find honest day labor at the harbor docks, sweating under the afternoon sun hauling heavy cargo crates. The dockmaster tosses you 35 Gold for your efforts."
+            elif any(k in prompt_lower for k in ["steal", "pocket", "pilfer", "pickpocket", "rob", "loot"]):
+                action_type = "CRIME_STEAL"
+                difficulty = "HARD"
+                chance = 50
+                outcome = "PARTIAL_SUCCESS"
+                gold = 75
+                wanted_delta = 1
+                rep_faction = "pirate"
+                rep_delta = 3
+                narrative = "You slip through the harbor shadows and deftly cut a fat merchant's purse strings, slipping away with 75 Gold before anyone notices."
             elif any(k in prompt_lower for k in ["betray", "informant", "snitch", "sabotage", "treason", "leak"]):
                 action_type = "BETRAY"
+                difficulty = "HARD"
+                chance = 55
+                outcome = "SUCCESS"
+                rep_faction = "marine"
+                rep_delta = 5
+                narrative = "You quietly make your way to the Marine liaison and whisper confidential movements of your pirate crew."
             elif "smuggle" in prompt_lower:
                 action_type = "SMUGGLE"
-            elif "observe" in prompt_lower or "examine" in prompt_lower:
+                difficulty = "HARD"
+                chance = 55
+                outcome = "SUCCESS"
+                gold = 120
+                rep_faction = "pirate"
+                rep_delta = 2
+                narrative = "You sneak contraband past sleepy dock sentries and deliver the goods to a shadowy contact."
+            elif "observe" in prompt_lower or "examine" in prompt_lower or "look" in prompt_lower:
                 action_type = "EXAMINE"
-
-            outcome = "SUCCESS" if is_feasible else "FAILURE"
-            if any(k in prompt_lower for k in ["sneak", "steal", "pocket", "betray", "informant"]):
-                outcome = "PARTIAL_SUCCESS"
+                difficulty = "TRIVIAL"
+                chance = 95
+                outcome = "SUCCESS"
+                narrative = "You survey the surroundings with sharp eyes, noting the guard patrols and ship moorings."
+            else:
+                outcome = "SUCCESS"
 
             return schema(
                 intent=f"Player attempts to execute {action_type.lower()}",
                 action_type=action_type,
+                difficulty_level=difficulty,
+                success_chance_percent=chance,
                 target=None,
-                parameters={},
                 feasible=is_feasible,
                 rejection_reason=rejection,
                 proposed_outcome=outcome,
-                narrative="You move cautiously into position, assessing the surrounding guards and shadows.",
-                requested_state_changes=[]
+                reward_gold=gold,
+                reward_items_summary=items_summary,
+                health_change=health_delta,
+                wanted_level_change=wanted_delta,
+                reputation_faction=rep_faction,
+                reputation_change=rep_delta,
+                narrative=narrative
             )
 
         elif schema_name == "NPCReaction":

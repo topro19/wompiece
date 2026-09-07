@@ -20,8 +20,8 @@ class Settings(BaseSettings):
 
     # AI Settings (Gemini API)
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL_FAST: str = "gemini-3-flash-preview"
-    GEMINI_MODEL_REASONING: str = "gemini-3-pro-preview"
+    GEMINI_MODEL_FAST: str = "gemini-3.6-flash"
+    GEMINI_MODEL_REASONING: str = "gemini-3.6-flash"
 
     # Simulation Parameters
     WORLD_TICK_INTERVAL_SECONDS: int = 60

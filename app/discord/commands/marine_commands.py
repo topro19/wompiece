@@ -270,18 +270,45 @@ async def freeform_action_command(interaction: discord.Interaction, action_descr
             untrusted_action_text=action_description
         )
 
-        outcome_color = discord.Color.green() if res["success"] else discord.Color.red()
+        outcome_color = discord.Color.gold() if res["outcome"] == "CRITICAL_SUCCESS" else (
+            discord.Color.green() if res["success"] else (
+                discord.Color.orange() if res["outcome"] == "PARTIAL_SUCCESS" else discord.Color.red()
+            )
+        )
+
         embed = discord.Embed(
             title=f"⚔️ Action Resolution: {char.name}",
-            description=f"**Attempted:** *\"{action_description}\"*\n\n**Outcome:** `{res['outcome']}`\n\n{res['narrative']}",
+            description=(
+                f"**Attempted:** *\"{action_description}\"*\n"
+                f"**Intent:** *{res.get('intent', action_description)}*\n\n"
+                f"🎲 **Difficulty:** `{res.get('difficulty_level', 'MODERATE')}` "
+                f"| **Odds:** `{res.get('success_chance_percent', 65)}%` "
+                f"| **Roll:** `{res.get('dice_roll', 0)}/100` "
+                f"-> **Outcome:** `{res['outcome']}`\n\n"
+                f"{res['narrative']}"
+            ),
             color=outcome_color
         )
 
-        if res.get("state_deltas"):
-            details = [f"• **{k.replace('_', ' ').title()}:** {v}" for k, v in res["state_deltas"].items()]
-            embed.add_field(name="Consequences & State Mutations", value="\n".join(details), inline=False)
+        deltas = res.get("state_deltas", {})
+        if deltas:
+            lines = []
+            if "gold_earned" in deltas:
+                lines.append(f"💰 **Gold Earned:** `{deltas['gold_earned']}` (Wallet: `{deltas.get('new_balance', 'Updated')}`)")
+            if "health_loss" in deltas:
+                lines.append(f"❤️ **Health Impact:** `{deltas['health_loss']}`")
+            if "wanted_level" in deltas:
+                lines.append(f"🚨 **Wanted Level:** `{deltas['wanted_level']}`")
+            if "reputation" in deltas:
+                lines.append(f"⚖️ **Reputation:** `{deltas['reputation']}`")
+            if "items_found" in deltas:
+                lines.append(f"📦 **Items Gained:** `{deltas['items_found']}`")
+            for k, v in deltas.items():
+                if k not in ["gold_earned", "new_balance", "health_loss", "wanted_level", "reputation", "items_found"]:
+                    lines.append(f"• **{k.replace('_', ' ').title()}:** {v}")
+            embed.add_field(name="📋 Consequences & Ledger Settlement", value="\n".join(lines), inline=False)
 
-        embed.set_footer(text="Deterministic Rule Engine & Gemini Evaluation")
+        embed.set_footer(text="Deterministic Rule Engine & Gemini AI Probability Evaluation")
         await interaction.followup.send(embed=embed)
     except Exception as e:
         await interaction.followup.send(f"Action failed to resolve: {str(e)}")

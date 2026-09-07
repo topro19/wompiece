@@ -48,12 +48,11 @@ class ActionEngine:
             untrusted_player_text=untrusted_action_text
         )
 
-        # 2. AI Reasoning & Proposal (Gemini 3 Flash)
+        # 2. AI Reasoning & Proposal (Google Gemini)
         proposal: ActionProposal = await gemini_provider.structured_output(
             prompt=ctx["prompt"],
             schema=ActionProposal,
-            system_instruction=ctx["system_instruction"],
-            model="gemini-3-flash-preview"
+            system_instruction=ctx["system_instruction"]
         )
 
         # 3. Deterministic Validation Gate
@@ -61,27 +60,106 @@ class ActionEngine:
             return {
                 "success": False,
                 "outcome": "INFEASIBLE",
+                "intent": proposal.intent,
+                "difficulty_level": proposal.difficulty_level,
+                "success_chance_percent": proposal.success_chance_percent,
+                "dice_roll": 0,
+                "reward_gold": 0,
                 "narrative": proposal.rejection_reason or "That action cannot be physically performed right now.",
-                "proposal": proposal.model_dump()
+                "state_deltas": {}
             }
 
-        # 4. Process Specific Action Archetypes
+        # 4. Deterministic Dice Roll & Probability Mechanics
+        chance = max(5, min(95, proposal.success_chance_percent))
+        dice_roll = random.randint(1, 100)
         action_type = proposal.action_type.upper()
-        state_deltas = {}
 
-        # Handle Betrayal / Thefts against own crew
-        if "BETRAY" in action_type or "STEAL" in action_type or "SABOTAGE" in action_type:
+        if dice_roll <= max(1, int(chance * 0.10)):
+            outcome = "CRITICAL_SUCCESS"
+        elif dice_roll <= chance:
+            outcome = "SUCCESS"
+        elif dice_roll <= min(98, chance + 15):
+            outcome = "PARTIAL_SUCCESS"
+        elif dice_roll >= 95 or "STEAL" in action_type or "CRIME" in action_type:
+            outcome = "DETECTED" if ("STEAL" in action_type or "CRIME" in action_type) else "CRITICAL_FAILURE"
+        else:
+            outcome = "FAILURE"
+
+        is_success = outcome in ["SUCCESS", "PARTIAL_SUCCESS", "CRITICAL_SUCCESS"]
+        state_deltas: Dict[str, Any] = {}
+
+        # 5. Authoritative Rewards Disbursement
+        earned_gold = 0
+        if is_success and proposal.reward_gold > 0:
+            multiplier = 1.5 if outcome == "CRITICAL_SUCCESS" else (0.5 if outcome == "PARTIAL_SUCCESS" else 1.0)
+            earned_gold = max(1, int(proposal.reward_gold * multiplier))
+            earned_gold = min(500, earned_gold)  # Strict authoritative cap
+
+            await ledger.transfer(
+                sender_id=None,
+                receiver_id=character.character_id,
+                amount=earned_gold,
+                reason=f"Action Reward: {proposal.intent[:45]}",
+                idempotency_key=f"act_reward_{character.character_id}_{uuid.uuid4().hex[:8]}"
+            )
+            state_deltas["gold_earned"] = f"+{earned_gold} Gold"
+
+            updated_char = await db.characters.find_one({"_id": character.character_id})
+            if updated_char:
+                state_deltas["new_balance"] = f"{updated_char.get('wealth', character.wealth + earned_gold)} Gold"
+
+        # 6. Failure Consequences (Health Loss, Bounty, Wanted Level)
+        if not is_success:
+            if proposal.health_change < 0 or outcome == "CRITICAL_FAILURE":
+                damage = abs(proposal.health_change) if proposal.health_change < 0 else 15
+                new_health = max(1, character.health - damage)
+                await db.characters.update_one(
+                    {"_id": character.character_id},
+                    {"$set": {"health": new_health}}
+                )
+                state_deltas["health_loss"] = f"-{damage} HP ({new_health}/{character.max_health})"
+
+            if proposal.wanted_level_change > 0 or outcome == "DETECTED":
+                wanted_inc = max(1, proposal.wanted_level_change)
+                await db.characters.update_one(
+                    {"_id": character.character_id},
+                    {"$inc": {"wanted_level": wanted_inc, "bounty": wanted_inc * 100}}
+                )
+                state_deltas["wanted_level"] = f"+{wanted_inc} (Wanted Level {character.wanted_level + wanted_inc})"
+
+        # 7. Reputation Delta
+        if proposal.reputation_faction and proposal.reputation_change != 0:
+            valid_factions = ["marine", "pirate", "merchant", "independent"]
+            f_clean = proposal.reputation_faction.lower().strip()
+            if f_clean in valid_factions:
+                field_name = f"reputation_{f_clean}"
+                await db.characters.update_one(
+                    {"_id": character.character_id},
+                    {"$inc": {field_name: proposal.reputation_change}}
+                )
+                prefix = "+" if proposal.reputation_change > 0 else ""
+                state_deltas["reputation"] = f"{prefix}{proposal.reputation_change} {f_clean.title()}"
+
+        # 8. Items summary
+        if is_success and proposal.reward_items_summary:
+            state_deltas["items_found"] = proposal.reward_items_summary
+
+        # 9. Handle Crew Betrayals
+        if ("BETRAY" in action_type or "STEAL" in action_type or "SABOTAGE" in action_type) and character.crew_id:
             resolution = await self._resolve_crew_betrayal(
                 character=character,
                 proposal=proposal
             )
             state_deltas.update(resolution)
 
-        # Narrative prose synthesis
         return {
-            "success": proposal.proposed_outcome in ["SUCCESS", "PARTIAL_SUCCESS", "CRITICAL_SUCCESS"],
-            "outcome": proposal.proposed_outcome,
+            "success": is_success,
+            "outcome": outcome,
             "intent": proposal.intent,
+            "difficulty_level": proposal.difficulty_level,
+            "success_chance_percent": chance,
+            "dice_roll": dice_roll,
+            "reward_gold": earned_gold,
             "narrative": proposal.narrative,
             "state_deltas": state_deltas
         }

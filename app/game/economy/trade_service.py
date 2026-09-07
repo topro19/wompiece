@@ -209,13 +209,14 @@ class TradeService:
                 suspect_ids=[character_id],
                 suspect_names=[char_doc.get("name")]
             )
-            await investigation_service.log_evidence(
+            await investigation_service.add_evidence(
                 case_id=case.case_id,
-                officer_id="marine_customs_inspector",
-                evidence_type=EvidenceType.PHYSICAL_CONTRABAND,
+                evidence_type=EvidenceType.CONTRABAND_SAMPLE,
+                title=f"Impounded {commodity.name}",
                 description=f"Seized {quantity} units of {commodity.name} during dock inspection.",
                 source="Customs Port Inspection",
-                related_character_id=character_id
+                location_id=loc_id,
+                discovered_by_id="marine_customs_inspector"
             )
 
             raise ValueError(

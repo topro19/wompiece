@@ -55,3 +55,30 @@ async def test_crew_betrayal_action(test_db):
 
     assert "state_deltas" in res
     assert "betrayal_detected" in res["state_deltas"]
+
+
+@pytest.mark.asyncio
+async def test_freeform_action_labor_reward(test_db):
+    """Verify that looking for work/labor earns gold dynamically and updates character wealth."""
+    worker = await character_service.create_character(
+        user_id="pirate_worker_1",
+        name="Dockworker Dan",
+        faction=Faction.INDEPENDENT
+    )
+    initial_gold = worker.wealth
+
+    res = await action_engine.resolve_freeform_action(
+        character_id=worker.character_id,
+        untrusted_action_text="I look around the docks to find a job hauling freight and earn coin."
+    )
+
+    assert "difficulty_level" in res
+    assert "success_chance_percent" in res
+    assert res["success_chance_percent"] >= 50
+    assert len(res["narrative"]) > 0
+
+    if res["success"]:
+        assert res["reward_gold"] > 0
+        reloaded = await character_service.get_active_character_by_user("pirate_worker_1")
+        assert reloaded.wealth == initial_gold + res["reward_gold"]
+

@@ -1,0 +1,25 @@
+﻿services:
+  - type: web
+    name: pirate-wars-bot
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL_FAST
+        value: gemini-3.6-flash
+      - key: GEMINI_MODEL_REASONING
+        value: gemini-3.6-flash
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DB_NAME
+        value: pirate_wars
+      - key: USE_MOCK_DB
+        value: false
