@@ -95,9 +95,9 @@ class GeminiAIProvider(AIProvider):
                 rejection = "Action defies physical and world law constraints."
 
             action_type = "FREEFORM"
-            if "steal" in prompt_lower:
+            if any(k in prompt_lower for k in ["steal", "pocket", "pilfer", "take", "loot"]):
                 action_type = "STEAL"
-            elif "betray" in prompt_lower:
+            elif any(k in prompt_lower for k in ["betray", "informant", "snitch", "sabotage", "treason", "leak"]):
                 action_type = "BETRAY"
             elif "smuggle" in prompt_lower:
                 action_type = "SMUGGLE"
@@ -105,7 +105,7 @@ class GeminiAIProvider(AIProvider):
                 action_type = "EXAMINE"
 
             outcome = "SUCCESS" if is_feasible else "FAILURE"
-            if "sneak" in prompt_lower or "steal" in prompt_lower or "betray" in prompt_lower:
+            if any(k in prompt_lower for k in ["sneak", "steal", "pocket", "betray", "informant"]):
                 outcome = "PARTIAL_SUCCESS"
 
             return schema(
