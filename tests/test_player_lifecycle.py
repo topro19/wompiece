@@ -96,3 +96,44 @@ async def test_character_movement_validation(test_db):
     # Invalid step: the_crimson_parrot -> governors_mansion (not connected!)
     with pytest.raises(ValueError, match="not connected"):
         await character_service.move_character(char.character_id, "governors_mansion")
+
+
+@pytest.mark.asyncio
+async def test_reborn_with_previous_name_if_no_living_character_uses_it(test_db):
+    """Verify player can reuse their past name after death if no living character is currently using it."""
+    user1 = "user_pirate_legacy"
+    name = "Edward Teach"
+
+    # 1. Create first character
+    char1 = await character_service.create_character(
+        user_id=user1,
+        name=name,
+        faction=Faction.PIRATE
+    )
+    assert char1.name == name
+
+    # 2. Permadeath occurs
+    await permadeath_service.execute_permadeath(
+        character_id=char1.character_id,
+        cause=CauseOfDeath.COMBAT,
+        location_id="port_azure_docks"
+    )
+
+    # 3. User creates a reborn character reusing the same name
+    reborn = await character_service.create_character(
+        user_id=user1,
+        name=name,
+        faction=Faction.INDEPENDENT
+    )
+    assert reborn.name == name
+    assert reborn.character_id != char1.character_id
+    assert reborn.status == CharacterStatus.ALIVE
+
+    # 4. Another user tries to claim the same name while 'reborn' is living -> Rejected
+    user2 = "user_impostor"
+    with pytest.raises(ValueError, match="already exists"):
+        await character_service.create_character(
+            user_id=user2,
+            name="edward teach",  # case-insensitive check
+            faction=Faction.PIRATE
+        )
