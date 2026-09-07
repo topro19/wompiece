@@ -26,6 +26,16 @@ class PirateWarsBot(commands.Bot):
 
         # Register slash commands
         self.tree.add_command(status_command)
+        from app.discord.commands.player_commands import (
+            start_command,
+            profile_command,
+            inventory_command,
+            location_command
+        )
+        self.tree.add_command(start_command)
+        self.tree.add_command(profile_command)
+        self.tree.add_command(inventory_command)
+        self.tree.add_command(location_command)
         
         # Sync slash commands with Discord
         if settings.DISCORD_GUILD_ID:
