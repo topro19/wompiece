@@ -34,9 +34,59 @@ async def start_web_server():
             logger.warning(f"Could not start Render health-check web server: {e}")
 
 
+import aiohttp
+from app.game.simulation.scheduler_service import simulation_scheduler
+
+
+async def keep_alive_loop():
+    """
+    Continuous background pulse executing every 5 seconds.
+    Maintains CPU activity and self-pings the HTTP server so Render never sleeps or idles.
+    """
+    tick = 0
+    external_url = os.environ.get("RENDER_EXTERNAL_URL")
+    port = os.environ.get("PORT")
+
+    logger.info("Keep-Alive pulse loop started (5-second cadence).")
+    await asyncio.sleep(5)
+
+    while True:
+        try:
+            tick += 1
+            # 1. Background CPU activity: execute simulation high tick
+            if db_manager.db:
+                await simulation_scheduler.tick_high()
+
+            # 2. Self-ping HTTP server every 60 seconds if hosted on Render to prevent idle spin-down
+            if tick % 12 == 0:  # 12 * 5s = 60 seconds
+                target_url = None
+                if external_url:
+                    target_url = f"{external_url.rstrip('/')}/healthz"
+                elif port:
+                    target_url = f"http://127.0.0.1:{port}/healthz"
+
+                if target_url:
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(target_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                                if resp.status == 200:
+                                    logger.debug(f"[KEEP-ALIVE] Pinged {target_url} successfully (HTTP 200).")
+                    except Exception as e:
+                        logger.debug(f"[KEEP-ALIVE] Ping attempt: {e}")
+
+            if tick % 60 == 0:  # Every 5 minutes log health
+                logger.info(f"[KEEP-ALIVE] Engine active. 5s pulses completed: {tick}. Bot: {bot.user}")
+
+        except Exception as e:
+            logger.warning(f"[KEEP-ALIVE] Pulse exception: {e}")
+
+        await asyncio.sleep(5)
+
+
 async def run_bot():
-    """Starts the persistent world server, health server, and Discord bot."""
+    """Starts the persistent world server, health server, keep-alive pulse, and Discord bot."""
     await start_web_server()
+    asyncio.create_task(keep_alive_loop())
 
     if not settings.DISCORD_TOKEN or settings.DISCORD_TOKEN == "mock_discord_token":
         logger.warning(
