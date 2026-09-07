@@ -49,16 +49,23 @@ class PirateWarsBot(commands.Bot):
         self.tree.add_command(gamble_group)
         from app.discord.commands.combat_commands import combat_group
         self.tree.add_command(combat_group)
+        from app.discord.commands.ship_commands import ship_group
+        self.tree.add_command(ship_group)
+        from app.discord.commands.admin_commands import admin_group
+        self.tree.add_command(admin_group)
         
         # Sync slash commands with Discord
-        if settings.DISCORD_GUILD_ID:
-            guild = discord.Object(id=int(settings.DISCORD_GUILD_ID))
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            logger.info(f"Synchronized slash commands for guild {settings.DISCORD_GUILD_ID}.")
-        else:
-            await self.tree.sync()
-            logger.info("Synchronized global slash commands.")
+        try:
+            if settings.DISCORD_GUILD_ID:
+                guild = discord.Object(id=int(settings.DISCORD_GUILD_ID))
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+                logger.info(f"Synchronized slash commands for guild {settings.DISCORD_GUILD_ID}.")
+            else:
+                await self.tree.sync()
+                logger.info("Synchronized global slash commands.")
+        except discord.errors.MissingApplicationID:
+            logger.warning("Discord client application ID not set or running offline; skipped remote command sync.")
 
     async def on_ready(self):
         logger.info(f"PirateWarsBot logged in as {self.user} (ID: {self.user.id}).")

@@ -157,9 +157,16 @@ class CharacterService:
         if current_location_id == target_location_id:
             raise ValueError("You are already at this location.")
 
+        current_loc = location_service.get_location(current_location_id)
+        if current_loc and current_loc.is_sea_zone:
+            raise ValueError("You are currently at sea. Use ship sailing navigation to reach port.")
+
+        target_loc = location_service.get_location(target_location_id)
+        if target_loc and target_loc.is_sea_zone:
+            raise ValueError("You cannot walk into the open sea! Board or command a ship to sail across sea lanes.")
+
         # Validate Movement Graph
         if not location_service.can_move(current_location_id, target_location_id):
-            target_loc = location_service.get_location(target_location_id)
             target_name = target_loc.name if target_loc else target_location_id
             raise ValueError(f"Cannot travel directly to {target_name}. It is not connected to your current location.")
 

@@ -47,7 +47,8 @@ class LocationTravelView(discord.ui.View):
         super().__init__(timeout=120)
         destinations = location_service.get_destinations(current_location_id)
         for dest in destinations:
-            self.add_item(TravelButton(target_id=dest.location_id, label=dest.name.split(" - ")[-1]))
+            if not dest.is_sea_zone:
+                self.add_item(TravelButton(target_id=dest.location_id, label=dest.name.split(" - ")[-1]))
 
 
 # --- Slash Commands ---

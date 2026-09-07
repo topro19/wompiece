@@ -10,6 +10,7 @@ class Location(BaseModel):
     description: str
     connected_locations: List[str] = Field(default_factory=list)
     is_port: bool = False
+    is_sea_zone: bool = False
     security_level: int = Field(default=3, ge=1, le=5)  # 1: lawless, 5: naval fortress
     facilities: List[str] = Field(default_factory=list)
 
@@ -20,8 +21,9 @@ DEFAULT_LOCATIONS: Dict[str, Location] = {
         name="Port Azure - Grand Docks",
         island="Azure Island",
         description="A sprawling harbor lined with galleons, sloops, and sea merchants. Marine sentries eye travelers warily from elevated watchtowers.",
-        connected_locations=["port_azure_market", "the_crimson_parrot", "marine_headquarters"],
+        connected_locations=["port_azure_market", "the_crimson_parrot", "marine_headquarters", "azure_sea_lane"],
         is_port=True,
+        is_sea_zone=False,
         security_level=3,
         facilities=["shipyard", "docks", "cargo_wharf"]
     ),
@@ -32,6 +34,7 @@ DEFAULT_LOCATIONS: Dict[str, Location] = {
         description="A bustling, dimly lit tavern reeking of stale rum and salt. Dice clatter in shadowy booths, and whispered bargains exchange hands.",
         connected_locations=["port_azure_docks", "smugglers_cove"],
         is_port=False,
+        is_sea_zone=False,
         security_level=1,
         facilities=["tavern", "gambling_den", "rumor_mill", "inn"]
     ),
@@ -42,6 +45,7 @@ DEFAULT_LOCATIONS: Dict[str, Location] = {
         description="A vibrant bazaar filled with stalls selling spices, silks, ship provisions, and navigational charts under watchful civilian inspectors.",
         connected_locations=["port_azure_docks", "governors_mansion"],
         is_port=False,
+        is_sea_zone=False,
         security_level=3,
         facilities=["general_store", "bank", "trading_post"]
     ),
@@ -52,6 +56,7 @@ DEFAULT_LOCATIONS: Dict[str, Location] = {
         description="A fortified stone garrison flying the Marine flag. High stone walls protect interrogation holding cells, arsenals, and the office of the Marine Commander.",
         connected_locations=["port_azure_docks", "governors_mansion"],
         is_port=False,
+        is_sea_zone=False,
         security_level=5,
         facilities=["interrogation_cells", "armory", "bounty_board", "warrant_office"]
     ),
@@ -62,6 +67,7 @@ DEFAULT_LOCATIONS: Dict[str, Location] = {
         description="A hidden sea cavern behind the jagged rocks west of the port. Unsanctioned black-market contraband and illegal cargo pass through here undetected.",
         connected_locations=["the_crimson_parrot"],
         is_port=True,
+        is_sea_zone=False,
         security_level=1,
         facilities=["black_market", "hidden_dock", "fence"]
     ),
@@ -72,8 +78,67 @@ DEFAULT_LOCATIONS: Dict[str, Location] = {
         description="An ornate colonial estate surrounded by wrought-iron fences and manicured gardens. The center of political power and business permits.",
         connected_locations=["port_azure_market", "marine_headquarters"],
         is_port=False,
+        is_sea_zone=False,
         security_level=4,
         facilities=["licensing_office", "ballroom", "colonial_treasury"]
+    ),
+    # Open Sea Lanes
+    "azure_sea_lane": Location(
+        location_id="azure_sea_lane",
+        name="Azure Shipping Lane (Open Sea)",
+        island="Azure Sea",
+        description="The churning blue expanse of the open sea. Trade galleons brave pirate raiders and Marine patrols along this high-traffic maritime corridor.",
+        connected_locations=["port_azure_docks", "skull_rock_anchorage", "coral_bay_wharf"],
+        is_port=False,
+        is_sea_zone=True,
+        security_level=2,
+        facilities=["fishing_grounds", "navigation_buoy"]
+    ),
+    # Isla de la Muerte (Pirate Island)
+    "skull_rock_anchorage": Location(
+        location_id="skull_rock_anchorage",
+        name="Skull Rock Anchorage",
+        island="Isla de la Muerte",
+        description="A treacherous reef harbor dominated by a skull-shaped basalt cliff. Pirate crews careen hulls and celebrate plunder without fear of Marine law.",
+        connected_locations=["azure_sea_lane", "skull_rock_tavern"],
+        is_port=True,
+        is_sea_zone=False,
+        security_level=1,
+        facilities=["shipyard", "docks", "black_market"]
+    ),
+    "skull_rock_tavern": Location(
+        location_id="skull_rock_tavern",
+        name="The Black Skull Tavern",
+        island="Isla de la Muerte",
+        description="A raucous den of outlaws, buccaneers, and cutthroats. Shanty singing echoes through tobacco haze where mutineers plan their next strike.",
+        connected_locations=["skull_rock_anchorage"],
+        is_port=False,
+        is_sea_zone=False,
+        security_level=1,
+        facilities=["tavern", "gambling_den", "crew_hire"]
+    ),
+    # Verdant Atoll (Merchant Island)
+    "coral_bay_wharf": Location(
+        location_id="coral_bay_wharf",
+        name="Coral Bay - Trade Wharf",
+        island="Verdant Atoll",
+        description="A sunlit, crystal-lagoon port bustling with merchant caravels loading rare spices, rum barrels, and exotic textiles.",
+        connected_locations=["azure_sea_lane", "coral_bay_market"],
+        is_port=True,
+        is_sea_zone=False,
+        security_level=3,
+        facilities=["shipyard", "docks", "trading_post"]
+    ),
+    "coral_bay_market": Location(
+        location_id="coral_bay_market",
+        name="Verdant Atoll - Spice Bazaar",
+        island="Verdant Atoll",
+        description="A fragrant market surrounded by palm groves where guild merchants barter colonial luxuries and secure banking lines.",
+        connected_locations=["coral_bay_wharf"],
+        is_port=False,
+        is_sea_zone=False,
+        security_level=3,
+        facilities=["general_store", "bank", "spice_exchange"]
     )
 }
 
