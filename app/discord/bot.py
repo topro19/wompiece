@@ -41,6 +41,9 @@ class PirateWarsBot(commands.Bot):
         from app.discord.commands.business_commands import business_group, alias_group
         self.tree.add_command(business_group)
         self.tree.add_command(alias_group)
+        from app.discord.commands.marine_commands import case_group, freeform_action_command
+        self.tree.add_command(case_group)
+        self.tree.add_command(freeform_action_command)
         
         # Sync slash commands with Discord
         if settings.DISCORD_GUILD_ID:
