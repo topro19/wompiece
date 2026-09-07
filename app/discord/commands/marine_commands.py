@@ -285,3 +285,52 @@ async def freeform_action_command(interaction: discord.Interaction, action_descr
         await interaction.followup.send(embed=embed)
     except Exception as e:
         await interaction.followup.send(f"Action failed to resolve: {str(e)}")
+
+
+@app_commands.command(name="bribe", description="Attempt to secretly bribe a Marine officer. (Ephemeral & Discreet)")
+@app_commands.describe(
+    marine_name="Name of the Marine officer",
+    amount="Amount of gold to offer",
+    reason="What favor or silence you are requesting"
+)
+async def bribe_command(interaction: discord.Interaction, marine_name: str, amount: int, reason: str):
+    user_id = str(interaction.user.id)
+    char = await character_service.get_active_character_by_user(user_id)
+    if not char:
+        await interaction.response.send_message("No active character found.", ephemeral=True)
+        return
+
+    if char.wealth < amount:
+        await interaction.response.send_message("Insufficient funds to offer this bribe.", ephemeral=True)
+        return
+
+    from app.database.connection import db_manager
+    from app.game.investigations.corruption_service import corruption_service
+
+    db = db_manager.db
+    target_marine = await db.characters.find_one({
+        "name": {"$regex": f"^{marine_name.strip()}$", "$options": "i"},
+        "faction": Faction.MARINE.value,
+        "status": "ALIVE"
+    })
+    if not target_marine:
+        await interaction.response.send_message(f"Marine officer '{marine_name}' not found.", ephemeral=True)
+        return
+
+    try:
+        res = await corruption_service.attempt_bribe(
+            briber_character_id=char.character_id,
+            target_marine_id=target_marine["_id"],
+            amount=amount,
+            reason=reason
+        )
+
+        embed = discord.Embed(
+            title="🤫 Clandestine Transaction",
+            description=f"You passed **{amount} Gold** to {target_marine['name']}.\n\n*{res['message']}*",
+            color=discord.Color.dark_magenta()
+        )
+        embed.set_footer(text="Private & Ephemeral (Never leaked to public chat)")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"Bribe failed: {str(e)}", ephemeral=True)

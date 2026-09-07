@@ -46,9 +46,11 @@ class GamblingService:
             raise ValueError(f"Wager must be between {table.min_wager} and {table.max_wager} gold.")
 
         # 1. Deduct wager from player into table
+        biz_doc = await db.businesses.find_one({"_id": business_id})
+        wager_receiver = business_id if biz_doc else "world_gambling_bank"
         tx_wager = await ledger.transfer(
             sender_id=character_id,
-            receiver_id=business_id,
+            receiver_id=wager_receiver,
             amount=wager,
             reason=f"Wager on High-Low Dice at {table.business_name}",
             idempotency_key=f"gamble_wager_{character_id}_{uuid.uuid4()}"
@@ -95,8 +97,9 @@ class GamblingService:
 
         # 3. Pay out winnings if won
         if player_won and payout > 0:
+            payout_sender = business_id if (biz_doc and biz_doc.get("daily_revenue", 0) >= payout) else None
             await ledger.transfer(
-                sender_id=business_id,
+                sender_id=payout_sender,
                 receiver_id=character_id,
                 amount=payout,
                 reason=f"Winnings from High-Low Dice at {table.business_name}",
