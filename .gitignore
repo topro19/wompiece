@@ -43,3 +43,5 @@ htmlcov/
 # App Logs & Temp
 logs/
 *.log
+
+.vercel
