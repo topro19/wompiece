@@ -37,19 +37,20 @@ class TravelSelectButton(discord.ui.Button):
         self.route_type = route_type
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         user_id = str(interaction.user.id)
         char = await character_service.get_active_character_by_user(user_id)
         if not char:
-            await interaction.response.send_message("No active living character.", ephemeral=True)
+            await interaction.followup.send("No active living character.", ephemeral=True)
             return
 
         result = await travel_engine.execute_travel(char.character_id, self.destination_id)
         if not result["success"]:
-            await interaction.response.send_message(f"❌ Travel failed: {result['message']}", ephemeral=True)
+            await interaction.followup.send(f"❌ Travel failed: {result['message']}", ephemeral=True)
             return
 
         embed = build_travel_result_embed(result)
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
 
 class MapView(discord.ui.View):
@@ -201,31 +202,32 @@ async def map_command(
     level: Optional[app_commands.Choice[str]] = None,
     island_name: Optional[str] = None
 ):
+    await interaction.response.defer(ephemeral=True)
     user_id = str(interaction.user.id)
     char = await character_service.get_active_character_by_user(user_id)
     if not char:
-        await interaction.response.send_message("No active living character found. Use `/start` to begin.", ephemeral=True)
+        await interaction.followup.send("No active living character found. Use `/start` to begin.", ephemeral=True)
         return
 
     requested_level = level.value if level else "island"
     embed, view = await build_map_presentation(char, requested_level, island_name)
-    await interaction.response.send_message(embed=embed, view=view)
+    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
 @app_commands.command(name="travel", description="Set sail or march to another destination with instant resolution and rich route encounters.")
 @app_commands.describe(destination="Target destination name or ID (e.g. Skull Island, Sunken Reef, Mistfall)")
 async def travel_command(interaction: discord.Interaction, destination: Optional[str] = None):
+    await interaction.response.defer(ephemeral=True)
     user_id = str(interaction.user.id)
     char = await character_service.get_active_character_by_user(user_id)
     if not char:
-        await interaction.response.send_message("No active living character found. Use `/start` to begin.", ephemeral=True)
+        await interaction.followup.send("No active living character found. Use `/start` to begin.", ephemeral=True)
         return
 
     if not destination:
-        # Show destination picker
         destinations = await travel_engine.get_available_destinations(char.character_id)
         if not destinations:
-            await interaction.response.send_message("No accessible routes found from your current location.", ephemeral=True)
+            await interaction.followup.send("No accessible routes found from your current location.", ephemeral=True)
             return
 
         embed = discord.Embed(
@@ -242,26 +244,26 @@ async def travel_command(interaction: discord.Interaction, destination: Optional
             )
             view.add_item(TravelSelectButton(dest["id"], f"Go to {dest['name']}", dest["route_type"]))
 
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         return
 
-    # Execute travel
     result = await travel_engine.execute_travel(char.character_id, destination)
     if not result["success"]:
-        await interaction.response.send_message(f"❌ Cannot navigate to '{destination}': {result['message']}", ephemeral=True)
+        await interaction.followup.send(f"❌ Cannot navigate to '{destination}': {result['message']}", ephemeral=True)
         return
 
     embed = build_travel_result_embed(result)
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @app_commands.command(name="mark", description="Place a custom waypoint or personal note on your nautical chart.")
 @app_commands.describe(label="Short label for this marker", notes="Secret or tactical notes for this location")
 async def mark_command(interaction: discord.Interaction, label: str, notes: str = ""):
+    await interaction.response.defer(ephemeral=True)
     user_id = str(interaction.user.id)
     char = await character_service.get_active_character_by_user(user_id)
     if not char:
-        await interaction.response.send_message("No active living character found.", ephemeral=True)
+        await interaction.followup.send("No active living character found.", ephemeral=True)
         return
 
     marker = await map_service.add_marker(char.character_id, label, notes)
@@ -272,20 +274,21 @@ async def mark_command(interaction: discord.Interaction, label: str, notes: str 
     )
     if notes:
         embed.add_field(name="Notes", value=notes)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @app_commands.command(name="markers", description="List all your custom map markers and waypoints.")
 async def markers_command(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     user_id = str(interaction.user.id)
     char = await character_service.get_active_character_by_user(user_id)
     if not char:
-        await interaction.response.send_message("No active living character found.", ephemeral=True)
+        await interaction.followup.send("No active living character found.", ephemeral=True)
         return
 
     markers = await map_service.list_markers(char.character_id)
     if not markers:
-        await interaction.response.send_message("You have no custom markers placed. Use `/mark` to create one.", ephemeral=True)
+        await interaction.followup.send("You have no custom markers placed. Use `/mark` to create one.", ephemeral=True)
         return
 
     embed = discord.Embed(
@@ -300,15 +303,16 @@ async def markers_command(interaction: discord.Interaction):
             inline=False
         )
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @app_commands.command(name="timeline", description="View recent chronological world history, dispatch logs, and incoming messages.")
 async def timeline_command(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     user_id = str(interaction.user.id)
     char = await character_service.get_active_character_by_user(user_id)
     if not char:
-        await interaction.response.send_message("No active living character found.", ephemeral=True)
+        await interaction.followup.send("No active living character found.", ephemeral=True)
         return
 
     events = await notification_service.get_recent_timeline(char.character_id, limit=10)
@@ -329,4 +333,4 @@ async def timeline_command(interaction: discord.Interaction):
     else:
         embed.add_field(name="Recent World Events", value="No recorded events yet in this timeline.", inline=False)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
