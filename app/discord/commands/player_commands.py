@@ -1,6 +1,8 @@
 import discord
 from discord import app_commands
 from typing import Optional, List
+import re
+import time
 
 from app.game.models.character import Faction
 from app.services.character_service import character_service
@@ -44,22 +46,24 @@ def build_conversation_embed(npc: WorldNPC, res: NPCInteractionResult, player_ac
 
 class NPCSpeechModal(discord.ui.Modal):
     """Modal allowing the player to input custom freeform speech or action to the NPC."""
-    def __init__(self, npc: WorldNPC, parent_view: discord.ui.View):
-        super().__init__(title=f"Speak with {npc.name[:30]}")
+    def __init__(self, npc: WorldNPC, parent_view: Optional[discord.ui.View] = None):
+        clean_name = re.sub(r'[^a-zA-Z0-9 ]', '', npc.name).strip()[:25] or "NPC"
+        super().__init__(title=f"Speak with {clean_name}")
         self.npc = npc
         self.parent_view = parent_view
 
         self.speech_input = discord.ui.TextInput(
             label="What do you say or do?",
-            placeholder="e.g. 'I'm looking for work on the docks. Know anyone hiring?' or 'What's the word on the Marine cutter?'",
+            placeholder="e.g. 'I'm looking for work on the docks.' or 'What's the word on the Marine cutter?'",
             style=discord.TextStyle.paragraph,
             required=True,
-            max_length=300
+            max_length=300,
+            custom_id="player_custom_speech_text"
         )
         self.add_item(self.speech_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         user_id = str(interaction.user.id)
         char = await character_service.get_active_character_by_user(user_id)
         if not char:
@@ -76,15 +80,28 @@ class NPCSpeechModal(discord.ui.Modal):
                 player_speech=speech_text
             )
 
-            embed = build_conversation_embed(self.npc, res, player_action_label=speech_text)
+            clock = await world_time_service.get_world_time()
+            clock_str = world_time_service.format_clock(clock)
+            embed = build_conversation_embed(self.npc, res, player_action_label=speech_text, clock_str=clock_str)
+            new_view = NPCActionsView(self.npc)
+
             try:
-                await interaction.edit_original_response(embed=embed, view=self.parent_view)
+                await interaction.edit_original_response(embed=embed, view=new_view)
             except Exception:
-                if interaction.message:
-                    await interaction.message.edit(embed=embed, view=self.parent_view)
+                await interaction.followup.send(embed=embed, view=new_view, ephemeral=True)
         except Exception as e:
             logger.error(f"Error submitting custom speech: {e}", exc_info=True)
             await interaction.followup.send(f"⚠️ Speech failed: {e}", ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        logger.error(f"Error in NPCSpeechModal: {error}", exc_info=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"⚠️ Dialogue error: {error}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"⚠️ Dialogue error: {error}", ephemeral=True)
+        except Exception:
+            pass
 
 
 class OpenSpeechModalButton(discord.ui.Button):
@@ -94,8 +111,18 @@ class OpenSpeechModalButton(discord.ui.Button):
         self.npc = npc
 
     async def callback(self, interaction: discord.Interaction):
-        modal = NPCSpeechModal(npc=self.npc, parent_view=self.view)
-        await interaction.response.send_modal(modal)
+        try:
+            modal = NPCSpeechModal(npc=self.npc, parent_view=self.view)
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            logger.error(f"Failed to open NPC speech modal: {e}", exc_info=True)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(f"⚠️ Could not open speech window: {e}", ephemeral=True)
+                else:
+                    await interaction.followup.send(f"⚠️ Could not open speech window: {e}", ephemeral=True)
+            except Exception:
+                pass
 
 
 class NPCOptionButton(discord.ui.Button):
@@ -107,7 +134,7 @@ class NPCOptionButton(discord.ui.Button):
         self.button_label = label
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         user_id = str(interaction.user.id)
         char = await character_service.get_active_character_by_user(user_id)
         if not char:
@@ -121,8 +148,14 @@ class NPCOptionButton(discord.ui.Button):
                 action_type=self.action_type
             )
 
-            embed = build_conversation_embed(self.npc, res, player_action_label=f"[{self.button_label}]")
-            await interaction.edit_original_response(embed=embed, view=self.view)
+            clock = await world_time_service.get_world_time()
+            clock_str = world_time_service.format_clock(clock)
+            embed = build_conversation_embed(self.npc, res, player_action_label=f"[{self.button_label}]", clock_str=clock_str)
+            new_view = NPCActionsView(self.npc)
+            try:
+                await interaction.edit_original_response(embed=embed, view=new_view)
+            except Exception:
+                await interaction.followup.send(embed=embed, view=new_view, ephemeral=True)
         except Exception as e:
             logger.error(f"Error executing NPC option: {e}", exc_info=True)
             await interaction.followup.send(f"⚠️ Interaction failed: {e}", ephemeral=True)
@@ -160,6 +193,16 @@ class NPCActionsView(discord.ui.View):
         # Row 2: Bribe & Leave
         self.add_item(NPCOptionButton(npc, "BRIBE_50", "Offer Bribe (50 Gold)", "💰", discord.ButtonStyle.secondary, row=2))
         self.add_item(NPCLeaveButton(npc, row=2))
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
+        logger.error(f"Error in NPCActionsView on item {item}: {error}", exc_info=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"⚠️ Interaction error: {error}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"⚠️ Interaction error: {error}", ephemeral=True)
+        except Exception:
+            pass
 
 
 class NPCSelectMenu(discord.ui.Select):
@@ -230,8 +273,10 @@ class NPCApproachButton(discord.ui.Button):
             )
 
             # Continue the conversation by attaching the full NPCActionsView
+            clock = await world_time_service.get_world_time()
+            clock_str = world_time_service.format_clock(clock)
             view = NPCActionsView(self.npc)
-            embed = build_conversation_embed(self.npc, res, player_action_label=self.action_label)
+            embed = build_conversation_embed(self.npc, res, player_action_label=self.action_label, clock_str=clock_str)
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         except Exception as e:
             logger.error(f"Error in approach callback: {e}", exc_info=True)

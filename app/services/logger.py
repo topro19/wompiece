@@ -17,7 +17,15 @@ def setup_logger(name: str = "pirate_wars") -> logging.Logger:
 
         log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
         logger.setLevel(log_level)
+
+        # Also configure discord logger to send warnings/errors to stdout
+        discord_logger = logging.getLogger("discord")
+        if not discord_logger.handlers:
+            discord_logger.addHandler(handler)
+            discord_logger.setLevel(logging.WARNING)
+
     return logger
 
 
 logger = setup_logger()
+

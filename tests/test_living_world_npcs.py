@@ -234,3 +234,77 @@ async def test_npc_schedule_and_routine_simulation():
     # Verify NPC moved to the connected tavern
     updated_doc = await db_manager.db.npcs.find_one({"_id": traveling_sailor.npc_id})
     assert updated_doc["location_id"] == "the_crimson_parrot"
+
+
+@pytest.mark.asyncio
+async def test_marine_commander_recruitment_rejection():
+    """Verify Marine Commanders reject recruit attempts with authentic Marine authority and no swabbing-decks template."""
+    marine_cmd = WorldNPC(
+        name='Calico "The Bold" Cross',
+        faction=NPCFaction.MARINE,
+        role=NPCArchetype.MARINE_COMMANDER,
+        role_title="Marine Commander",
+        occupation="Garrison Commander",
+        island_id="Azure Island",
+        home_location_id="marine_headquarters",
+        location_id="marine_headquarters",
+        personality=["Strict", "Disciplined", "Honorable"],
+        wealth=150
+    )
+    await db_manager.db.npcs.insert_one(marine_cmd.to_mongo())
+
+    await db_manager.db.characters.insert_one({
+        "_id": "char_pirate_test",
+        "name": "Captain Silver",
+        "faction": "PIRATE",
+        "wealth": 500
+    })
+
+    res = await npc_interaction_service.interact(
+        character_id="char_pirate_test",
+        npc_id=marine_cmd.npc_id,
+        action_type="RECRUIT"
+    )
+
+    assert res.npc_name == marine_cmd.name
+    assert res.trust_delta < 0  # Reprimanded
+    # Critical: Must NOT be the old static template!
+    assert "Swabbing decks for another captain" not in res.dialogue
+    assert len(res.dialogue) > 30
+
+
+@pytest.mark.asyncio
+async def test_incorruptible_marine_bribe_rejection():
+    """Verify an incorruptible Marine harshly rebukes bribe attempts dynamically."""
+    strict_marine = WorldNPC(
+        name="Sergeant Marcus Vane",
+        faction=NPCFaction.MARINE,
+        role=NPCArchetype.MARINE_SERGEANT,
+        role_title="Marine Sergeant",
+        occupation="Patrol Leader",
+        island_id="Azure Island",
+        home_location_id="port_azure_docks",
+        location_id="port_azure_docks",
+        personality=["Incorruptible", "Vigilant"],
+        wealth=30
+    )
+    await db_manager.db.npcs.insert_one(strict_marine.to_mongo())
+
+    await db_manager.db.characters.insert_one({
+        "_id": "char_smuggler_test",
+        "name": "Shady Pete",
+        "faction": "PIRATE",
+        "wealth": 200
+    })
+
+    res = await npc_interaction_service.interact(
+        character_id="char_smuggler_test",
+        npc_id=strict_marine.npc_id,
+        action_type="BRIBE_50"
+    )
+
+    assert res.trust_delta < 0
+    assert res.respect_delta < 0
+    assert "rebuked" in res.memory_logged.lower() or "attempted" in res.memory_logged.lower()
+    assert len(res.dialogue) > 25
+
