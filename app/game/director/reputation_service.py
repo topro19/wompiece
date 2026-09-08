@@ -1,4 +1,4 @@
-﻿from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional
 from app.database.connection import db_manager
 from app.services.logger import logger
 
@@ -56,31 +56,36 @@ class ReputationService:
         char = await db.characters.find_one({"_id": character_id})
         return char.get("behavioral_traits", {}) if char else {}
 
-    async def get_reputation_standing(self, character_id: str) -> Dict[str, str]:
-        """Translates raw integers into descriptive social standing titles."""
+    def get_reputation_title(self, val: int) -> str:
+        """Converts an integer reputation value into a narrative standing title."""
+        if val >= 75: return "Revered Icon"
+        if val >= 45: return "Trusted Ally"
+        if val >= 20: return "Favorable Standing"
+        if val >= 5: return "Mildly Respected"
+        if val <= -75: return "Public Enemy No. 1"
+        if val <= -45: return "Hated Outlaw"
+        if val <= -20: return "Distrusted Person"
+        if val <= -5: return "Suspicious"
+        return "Neutral / Unknown"
+
+    async def get_all_reputations(self, character_id: str) -> Dict[str, int]:
+        """Retrieves raw numeric reputation dictionary for a character."""
         db = db_manager.db
         char = await db.characters.find_one({"_id": character_id})
         if not char:
             return {}
-
-        def to_title(val: int) -> str:
-            if val >= 75: return "Revered Icon"
-            if val >= 45: return "Trusted Ally"
-            if val >= 20: return "Favorable Standing"
-            if val >= 5: return "Mildly Respected"
-            if val <= -75: return "Public Enemy No. 1"
-            if val <= -45: return "Hated Outlaw"
-            if val <= -20: return "Distrusted Person"
-            if val <= -5: return "Suspicious"
-            return "Neutral / Unknown"
-
         return {
-            "Marines": to_title(char.get("reputation_marine", 0)),
-            "Pirates": to_title(char.get("reputation_pirate", 0)),
-            "Merchants": to_title(char.get("reputation_merchant", 0)),
-            "Civilians": to_title(char.get("reputation_civilian", 0)),
-            "Underworld": to_title(char.get("reputation_criminal", 0))
+            "Marines": char.get("reputation_marine", 0),
+            "Pirates": char.get("reputation_pirate", 0),
+            "Merchants": char.get("reputation_merchant", 0),
+            "Civilians": char.get("reputation_civilian", 0),
+            "Underworld": char.get("reputation_criminal", 0)
         }
+
+    async def get_reputation_standing(self, character_id: str) -> Dict[str, str]:
+        """Translates raw integers into descriptive social standing titles."""
+        reps = await self.get_all_reputations(character_id)
+        return {faction: self.get_reputation_title(val) for faction, val in reps.items()}
 
 
 reputation_service = ReputationService()

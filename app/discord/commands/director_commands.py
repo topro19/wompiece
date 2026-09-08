@@ -25,12 +25,18 @@ class DiscoveryChoiceButton(discord.ui.Button):
         self.action_choice = action_choice
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         user_id = str(interaction.user.id)
         char = await character_service.get_active_character_by_user(user_id)
         if not char:
             await interaction.followup.send("No active living character.", ephemeral=True)
             return
+
+        # Visually disable buttons to show action is processed
+        if self.view:
+            for item in self.view.children:
+                item.disabled = True
+            self.style = discord.ButtonStyle.success
 
         try:
             result = await discovery_service.resolve_discovery_action(
@@ -54,7 +60,11 @@ class DiscoveryChoiceButton(discord.ui.Button):
             if result.get("merged_thread"):
                 embed.add_field(name="⚠️ Story Threads Merged!", value=f"Threads connected: {result['merged_thread']}", inline=False)
 
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            # Update the original response in place for immediate visual response
+            try:
+                await interaction.edit_original_response(embed=embed, view=self.view)
+            except Exception:
+                await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as e:
             logger.error(f"Error resolving discovery action: {e}", exc_info=True)
             await interaction.followup.send(f"❌ Error resolving action: {e}", ephemeral=True)

@@ -35,7 +35,6 @@ class GeminiAIProvider(AIProvider):
         if target not in pool:
             target = settings.GEMINI_MODEL_BASIC
 
-        # For basic/frequent tasks, prioritize Gemma 4 models first to conserve Gemini tokens
         if "gemma" in target.lower():
             gemma_models = [m for m in pool if "gemma" in m.lower()]
             gemini_models = [m for m in pool if "gemma" not in m.lower()]
@@ -83,11 +82,13 @@ class GeminiAIProvider(AIProvider):
                         response_schema=schema,
                         temperature=0.2
                     )
-                    response = await self._call_generate_content(
+                    timeout = 3.5 if "gemma" in candidate.lower() else 10.0
+                    call = self._call_generate_content(
                         model=candidate,
                         contents=prompt,
                         config=config
                     )
+                    response = await asyncio.wait_for(call, timeout=timeout)
                     if idx > 0:
                         logger.info(f"Fallback model '{candidate}' successfully resolved structured output.")
                     return schema.model_validate_json(response.text)
@@ -115,11 +116,13 @@ class GeminiAIProvider(AIProvider):
                         system_instruction=system_instruction,
                         temperature=0.7
                     )
-                    response = await self._call_generate_content(
+                    timeout = 3.5 if "gemma" in candidate.lower() else 10.0
+                    call = self._call_generate_content(
                         model=candidate,
                         contents=prompt,
                         config=config
                     )
+                    response = await asyncio.wait_for(call, timeout=timeout)
                     if idx > 0:
                         logger.info(f"Fallback model '{candidate}' successfully generated prose.")
                     return response.text

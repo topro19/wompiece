@@ -329,6 +329,10 @@ class DiscoveryService:
         if not doc:
             raise ValueError("Discovery record not found.")
 
+        # If already resolved (e.g. repeated click), return cached summary immediately
+        if doc.get("interacted") and doc.get("resolution_summary"):
+            return doc["resolution_summary"]
+
         discovery = WorldDiscovery(**doc)
         char = await db.characters.find_one({"_id": character_id})
         char_name = char.get("name", "Traveler") if char else "Traveler"
@@ -448,7 +452,7 @@ class DiscoveryService:
             else:
                 narrative = f"You proceed cautiously: {action_choice}. Your actions ripple subtly across the harbor district."
 
-        return {
+        resolution_data = {
             "success": True,
             "discovery_id": discovery_id,
             "action_taken": action_choice,
@@ -458,6 +462,11 @@ class DiscoveryService:
             "thread_updates": thread_updates,
             "merged_thread": merged_thread
         }
+        await db.discoveries.update_one(
+            {"_id": discovery_id},
+            {"$set": {"resolution_summary": resolution_data}}
+        )
+        return resolution_data
 
 
 discovery_service = DiscoveryService()

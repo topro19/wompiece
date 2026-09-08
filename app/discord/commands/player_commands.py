@@ -4,6 +4,7 @@ from app.game.models.character import Faction
 from app.services.character_service import character_service
 from app.game.world.location import location_service
 from app.game.world.time import world_time_service
+from app.services.logger import logger
 
 
 class TravelButton(discord.ui.Button):
@@ -109,107 +110,123 @@ async def start_command(interaction: discord.Interaction, name: str, faction: ap
 
 @app_commands.command(name="profile", description="View your current character's authoritative dossier and status.")
 async def profile_command(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    char = await character_service.get_active_character_by_user(user_id)
+    await interaction.response.defer(ephemeral=True)
+    try:
+        user_id = str(interaction.user.id)
+        char = await character_service.get_active_character_by_user(user_id)
 
-    if not char:
-        await interaction.response.send_message(
-            "You do not have an active living character. Use `/start` to enter the world.",
-            ephemeral=True
+        if not char:
+            await interaction.followup.send(
+                "You do not have an active living character. Use `/start` to enter the world.",
+                ephemeral=True
+            )
+            return
+
+        loc = location_service.get_location(char.location_id)
+        loc_name = loc.name if loc else char.location_id
+
+        embed = discord.Embed(
+            title=f"Dossier: {char.name}",
+            color=discord.Color.blue() if char.faction == Faction.MARINE else discord.Color.red()
         )
-        return
+        embed.add_field(name="Status", value=f"🟢 {char.status.value}", inline=True)
+        embed.add_field(name="Faction", value=char.faction.value.capitalize(), inline=True)
+        embed.add_field(name="Rank", value=char.rank, inline=True)
 
-    loc = location_service.get_location(char.location_id)
-    loc_name = loc.name if loc else char.location_id
+        embed.add_field(name="Health", value=f"{char.health}/{char.max_health} HP", inline=True)
+        embed.add_field(name="Wealth", value=f"{char.wealth} Gold", inline=True)
+        embed.add_field(name="Wanted Level", value=f"⭐ {char.wanted_level}", inline=True)
 
-    embed = discord.Embed(
-        title=f"Dossier: {char.name}",
-        color=discord.Color.blue() if char.faction == Faction.MARINE else discord.Color.red()
-    )
-    embed.add_field(name="Status", value=f"🟢 {char.status.value}", inline=True)
-    embed.add_field(name="Faction", value=char.faction.value.capitalize(), inline=True)
-    embed.add_field(name="Rank", value=char.rank, inline=True)
+        embed.add_field(name="Bounty", value=f"{char.bounty:,} Gold", inline=True)
+        embed.add_field(name="Current Location", value=loc_name, inline=True)
+        embed.add_field(name="Crew", value=char.crew_id or "Independent (None)", inline=True)
 
-    embed.add_field(name="Health", value=f"{char.health}/{char.max_health} HP", inline=True)
-    embed.add_field(name="Wealth", value=f"{char.wealth} Gold", inline=True)
-    embed.add_field(name="Wanted Level", value=f"⭐ {char.wanted_level}", inline=True)
+        # Multi-dimensional reputations & Ambition
+        from app.game.director.reputation_service import reputation_service
+        reps = await reputation_service.get_all_reputations(char.character_id)
+        rep_strings = []
+        for f, v in reps.items():
+            standing = reputation_service.get_reputation_title(v)
+            rep_strings.append(f"• **{f}**: {standing} ({v:+d})")
 
-    embed.add_field(name="Bounty", value=f"{char.bounty:,} Gold", inline=True)
-    embed.add_field(name="Current Location", value=loc_name, inline=True)
-    embed.add_field(name="Crew", value=char.crew_id or "Independent (None)", inline=True)
+        embed.add_field(name="⚖️ Reputations", value="\n".join(rep_strings) if rep_strings else "Neutral", inline=False)
+        if char.long_term_ambition:
+            embed.add_field(name="👑 Long-Term Ambition", value=char.long_term_ambition, inline=False)
+        if char.behavioral_traits:
+            traits_str = ", ".join([f"{k.capitalize()} ({v:+d})" for k, v in char.behavioral_traits.items()])
+            embed.add_field(name="🎭 Behavioral Traits", value=traits_str or "None recorded yet.", inline=False)
 
-    # Multi-dimensional reputations & Ambition
-    from app.game.director.reputation_service import reputation_service
-    reps = await reputation_service.get_all_reputations(char.character_id)
-    rep_strings = []
-    for f, v in reps.items():
-        standing = await reputation_service.get_reputation_standing(v)
-        rep_strings.append(f"{f}: {standing} ({v:+d})")
-
-    embed.add_field(name="⚖️ Reputations", value="\n".join(rep_strings), inline=False)
-    if char.long_term_ambition:
-        embed.add_field(name="👑 Long-Term Ambition", value=char.long_term_ambition, inline=False)
-    if char.behavioral_traits:
-        embed.add_field(name="🎭 Known Behavioral Traits", value=", ".join(char.behavioral_traits), inline=False)
-
-    embed.set_footer(text="Authoritative State Record | Check /home for active threads and opportunities")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+        embed.set_footer(text="Authoritative State Record | Check /home for active threads and opportunities")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in profile_command: {e}", exc_info=True)
+        await interaction.followup.send(f"⚠️ Error loading profile dossier: {e}", ephemeral=True)
 
 
 @app_commands.command(name="inventory", description="Inspect your personal inventory and equipment.")
 async def inventory_command(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    char = await character_service.get_active_character_by_user(user_id)
+    await interaction.response.defer(ephemeral=True)
+    try:
+        user_id = str(interaction.user.id)
+        char = await character_service.get_active_character_by_user(user_id)
 
-    if not char:
-        await interaction.response.send_message("No active living character found. Use `/start`.", ephemeral=True)
-        return
+        if not char:
+            await interaction.followup.send("No active living character found. Use `/start`.", ephemeral=True)
+            return
 
-    embed = discord.Embed(
-        title=f"{char.name}'s Sea Chest & Inventory",
-        description=f"Coinpurse: **{char.wealth} Gold**\n\n**Possessions:**",
-        color=discord.Color.dark_teal()
-    )
+        embed = discord.Embed(
+            title=f"{char.name}'s Sea Chest & Inventory",
+            description=f"Coinpurse: **{char.wealth} Gold**\n\n**Possessions:**",
+            color=discord.Color.dark_teal()
+        )
 
-    if not char.inventory:
-        embed.description += "\n*Your pockets are empty.*"
-    else:
-        for item in char.inventory:
-            embed.add_field(
-                name=f"📦 {item.get('name', 'Unknown Item')} ({item.get('type', 'gear')})",
-                value=item.get('desc', 'No description.'),
-                inline=False
-            )
+        if not char.inventory:
+            embed.description += "\n*Your pockets are empty.*"
+        else:
+            for item in char.inventory:
+                embed.add_field(
+                    name=f"📦 {item.get('name', 'Unknown Item')} ({item.get('type', 'gear')})",
+                    value=item.get('desc', 'No description.'),
+                    inline=False
+                )
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in inventory_command: {e}", exc_info=True)
+        await interaction.followup.send(f"⚠️ Error loading inventory: {e}", ephemeral=True)
 
 
 @app_commands.command(name="location", description="Inspect your current surroundings and see available travel routes.")
 async def location_command(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    char = await character_service.get_active_character_by_user(user_id)
+    await interaction.response.defer(ephemeral=True)
+    try:
+        user_id = str(interaction.user.id)
+        char = await character_service.get_active_character_by_user(user_id)
 
-    if not char:
-        await interaction.response.send_message("No active living character found. Use `/start`.", ephemeral=True)
-        return
+        if not char:
+            await interaction.followup.send("No active living character found. Use `/start`.", ephemeral=True)
+            return
 
-    loc = location_service.get_location(char.location_id)
-    if not loc:
-        await interaction.response.send_message("Current location data not found in registry.", ephemeral=True)
-        return
+        loc = location_service.get_location(char.location_id)
+        if not loc:
+            await interaction.followup.send("Current location data not found in registry.", ephemeral=True)
+            return
 
-    clock = await world_time_service.get_world_time()
-    clock_str = world_time_service.format_clock(clock)
+        clock = await world_time_service.get_world_time()
+        clock_str = world_time_service.format_clock(clock)
 
-    embed = discord.Embed(
-        title=f"📍 {loc.name}",
-        description=loc.description,
-        color=discord.Color.gold()
-    )
-    embed.add_field(name="Island", value=loc.island, inline=True)
-    embed.add_field(name="Security Rating", value=f"{'⭐' * loc.security_level} (Level {loc.security_level})", inline=True)
-    embed.add_field(name="Facilities", value=", ".join(loc.facilities) if loc.facilities else "None", inline=False)
-    embed.set_footer(text=clock_str)
+        embed = discord.Embed(
+            title=f"📍 {loc.name}",
+            description=loc.description,
+            color=discord.Color.gold()
+        )
+        embed.add_field(name="Island", value=loc.island, inline=True)
+        embed.add_field(name="Security Rating", value=f"{'⭐' * loc.security_level} (Level {loc.security_level})", inline=True)
+        embed.add_field(name="Facilities", value=", ".join(loc.facilities) if loc.facilities else "None", inline=False)
+        embed.set_footer(text=clock_str)
 
-    view = LocationTravelView(loc.location_id)
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        view = LocationTravelView(loc.location_id)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in location_command: {e}", exc_info=True)
+        await interaction.followup.send(f"⚠️ Error loading location: {e}", ephemeral=True)
