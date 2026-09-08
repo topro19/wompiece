@@ -107,7 +107,7 @@ class NPCEngine:
             prompt=prompt,
             schema=NPCReaction,
             system_instruction=system_instruction,
-            model=settings.GEMINI_MODEL_FAST
+            model=settings.GEMINI_MODEL_BASIC
         )
 
         # Log memory of this conversation

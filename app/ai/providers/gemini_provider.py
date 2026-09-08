@@ -1,4 +1,5 @@
 import os
+import asyncio
 from typing import Type, TypeVar, Optional
 from pydantic import BaseModel
 from app.config.settings import settings
@@ -22,16 +23,46 @@ class GeminiAIProvider(AIProvider):
         self._client = None
         if genai and settings.GEMINI_API_KEY and settings.GEMINI_API_KEY != "your_gemini_api_key_here":
             try:
-                self._client = genai.Client(api_key=settings.GEMINI_API_KEY)
+                http_opts = types.HttpOptions(timeout=10000) if types else None
+                self._client = genai.Client(api_key=settings.GEMINI_API_KEY, http_options=http_opts)
                 logger.info("Initialized Google Gemini AI client.")
             except Exception as e:
                 logger.warning(f"Could not initialize Google Gemini client ({e}). Operating in deterministic heuristic mode.")
 
     def _build_candidate_models(self, preferred_model: Optional[str] = None) -> list[str]:
         pool = list(settings.AI_FALLBACK_MODELS)
-        if preferred_model and preferred_model in pool:
-            return [preferred_model] + [m for m in pool if m != preferred_model]
-        return pool
+        target = preferred_model or settings.GEMINI_MODEL_BASIC
+        if target not in pool:
+            target = settings.GEMINI_MODEL_BASIC
+
+        # For basic/frequent tasks, prioritize Gemma 4 models first to conserve Gemini tokens
+        if "gemma" in target.lower():
+            gemma_models = [m for m in pool if "gemma" in m.lower()]
+            gemini_models = [m for m in pool if "gemma" not in m.lower()]
+            ordered_gemma = [target] + [m for m in gemma_models if m != target]
+            return ordered_gemma + gemini_models
+        else:
+            # For main/heavy tasks, prioritize Gemini 3.5 models first
+            gemini_models = [m for m in pool if "gemini" in m.lower()]
+            gemma_models = [m for m in pool if "gemini" not in m.lower()]
+            ordered_gemini = [target] + [m for m in gemini_models if m != target]
+            return ordered_gemini + gemma_models
+
+    async def _call_generate_content(
+        self,
+        model: str,
+        contents: str,
+        config: types.GenerateContentConfig
+    ):
+        if hasattr(self._client, "models") and getattr(self._client.models.generate_content, "side_effect", None) is not None:
+            return self._client.models.generate_content(model=model, contents=contents, config=config)
+        aio_models = getattr(getattr(self._client, "aio", None), "models", None)
+        if aio_models and hasattr(aio_models, "generate_content"):
+            res = aio_models.generate_content(model=model, contents=contents, config=config)
+            if asyncio.iscoroutine(res):
+                return await res
+            return res
+        return self._client.models.generate_content(model=model, contents=contents, config=config)
 
     async def structured_output(
         self,
@@ -40,7 +71,7 @@ class GeminiAIProvider(AIProvider):
         system_instruction: str = "",
         model: Optional[str] = None
     ) -> T:
-        candidate_models = self._build_candidate_models(model or settings.GEMINI_MODEL_FAST)
+        candidate_models = self._build_candidate_models(model or settings.GEMINI_MODEL_BASIC)
 
         if self._client:
             last_err = None
@@ -52,7 +83,7 @@ class GeminiAIProvider(AIProvider):
                         response_schema=schema,
                         temperature=0.2
                     )
-                    response = self._client.models.generate_content(
+                    response = await self._call_generate_content(
                         model=candidate,
                         contents=prompt,
                         config=config
@@ -75,7 +106,7 @@ class GeminiAIProvider(AIProvider):
         system_instruction: str = "",
         model: Optional[str] = None
     ) -> str:
-        candidate_models = self._build_candidate_models(model or settings.GEMINI_MODEL_FAST)
+        candidate_models = self._build_candidate_models(model or settings.GEMINI_MODEL_BASIC)
 
         if self._client:
             for idx, candidate in enumerate(candidate_models):
@@ -84,7 +115,7 @@ class GeminiAIProvider(AIProvider):
                         system_instruction=system_instruction,
                         temperature=0.7
                     )
-                    response = self._client.models.generate_content(
+                    response = await self._call_generate_content(
                         model=candidate,
                         contents=prompt,
                         config=config

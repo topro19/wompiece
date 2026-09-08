@@ -254,7 +254,7 @@ class DiscoveryService:
                 prompt=prompt,
                 schema=AIDiscoveryProposal,
                 system_instruction=system_instruction,
-                model=settings.GEMINI_MODEL_FAST
+                model=settings.GEMINI_MODEL_HEAVY
             )
 
             # Validate type against DiscoveryType enum
@@ -375,7 +375,7 @@ class DiscoveryService:
                 prompt=res_prompt,
                 schema=AIDiscoveryResolution,
                 system_instruction=res_system,
-                model=settings.GEMINI_MODEL_FAST
+                model=settings.GEMINI_MODEL_BASIC
             )
 
             narrative = resolution.outcome_narrative.strip()

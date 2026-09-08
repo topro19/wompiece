@@ -1,4 +1,4 @@
-﻿services:
+services:
   - type: web
     name: pirate-wars-bot
     runtime: python
@@ -13,10 +13,14 @@
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_MODEL_HEAVY
+        value: gemini-3.5-flash-lite
+      - key: GEMINI_MODEL_BASIC
+        value: gemma-4-26b-a4b-it
       - key: GEMINI_MODEL_FAST
-        value: gemini-3.6-flash
+        value: gemma-4-26b-a4b-it
       - key: GEMINI_MODEL_REASONING
-        value: gemini-3.6-flash
+        value: gemini-3.5-flash-lite
       - key: MONGO_URI
         sync: false
       - key: MONGO_DB_NAME

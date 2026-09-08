@@ -237,7 +237,7 @@ class InvestigationService:
             prompt=prompt,
             schema=MarineHeadDecision,
             system_instruction=system_instruction,
-            model=settings.GEMINI_MODEL_REASONING
+            model=settings.GEMINI_MODEL_HEAVY
         )
 
         warrant = Warrant(

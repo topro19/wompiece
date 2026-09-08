@@ -13,6 +13,7 @@ from app.ai.schemas.action_schemas import ActionProposal
 from app.game.events.event_bus import event_bus, WorldEvent
 from app.game.events.event_types import EventType, EventVisibility
 from app.services.logger import logger
+from app.config.settings import settings
 
 
 class ActionEngine:
@@ -48,11 +49,12 @@ class ActionEngine:
             untrusted_player_text=untrusted_action_text
         )
 
-        # 2. AI Reasoning & Proposal (Google Gemini)
+        # 2. AI Reasoning & Proposal (Gemma 4 for fast frequent player actions)
         proposal: ActionProposal = await gemini_provider.structured_output(
             prompt=ctx["prompt"],
             schema=ActionProposal,
-            system_instruction=ctx["system_instruction"]
+            system_instruction=ctx["system_instruction"],
+            model=settings.GEMINI_MODEL_BASIC
         )
 
         # 3. Deterministic Validation Gate

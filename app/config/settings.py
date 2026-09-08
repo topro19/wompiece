@@ -20,13 +20,15 @@ class Settings(BaseSettings):
 
     # AI Settings (Gemini & Gemma models)
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL_FAST: str = "gemini-3.5-flash-lite"
-    GEMINI_MODEL_REASONING: str = "gemini-3.1-flash-lite"
+    GEMINI_MODEL_HEAVY: str = "gemini-3.5-flash-lite"  # Main and heavy reasoning tasks
+    GEMINI_MODEL_BASIC: str = "gemma-4-26b-a4b-it"     # Basic & frequent tasks (Gemma 4)
+    GEMINI_MODEL_FAST: str = "gemma-4-26b-a4b-it"      # Backwards-compatible alias for basic/fast
+    GEMINI_MODEL_REASONING: str = "gemini-3.5-flash-lite"  # Backwards-compatible alias for heavy
     AI_FALLBACK_MODELS: list[str] = [
         "gemini-3.5-flash-lite",
         "gemini-3.1-flash-lite",
-        "gemma-4-31b-it",
         "gemma-4-26b-a4b-it",
+        "gemma-4-31b-it",
     ]
 
     # Simulation Parameters
