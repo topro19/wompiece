@@ -3,16 +3,18 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from app.database.connection import db_manager
+from app.config.settings import settings
 from app.game.director.director_models import WorldDiscovery, DiscoveryType, RewardGrant, RewardType
 from app.game.events.event_bus import event_bus, WorldEvent
 from app.game.events.event_types import EventType, EventVisibility
 from app.game.investigations.case_service import investigation_service
 from app.game.investigations.case_models import EvidenceType
+from app.ai.providers.gemini_provider import gemini_provider
+from app.ai.schemas.discovery_schemas import AIDiscoveryProposal, AIDiscoveryResolution
 from app.services.logger import logger
 
 
 DISCOVERY_TEMPLATES: List[Dict[str, Any]] = [
-    # 1. Crime Scenes & Bodies
     {
         "type": DiscoveryType.SUSPICIOUS_BODY,
         "title": "A Slumped Figure in the Wharf Shadows",
@@ -38,7 +40,6 @@ DISCOVERY_TEMPLATES: List[Dict[str, Any]] = [
             "Call out to the dock watch"
         ]
     },
-    # 2. Abandoned Cargo & Flotsam
     {
         "type": DiscoveryType.ABANDONED_CARGO,
         "title": "Waterlogged Rum Casks by the Breakers",
@@ -62,7 +63,6 @@ DISCOVERY_TEMPLATES: List[Dict[str, Any]] = [
             "Ask local stallholders whose cart dropped it"
         ]
     },
-    # 3. Secret Meetings & Plotters
     {
         "type": DiscoveryType.SECRET_MEETING,
         "title": "Muffled Whispers Behind the Drydock Keel",
@@ -86,7 +86,6 @@ DISCOVERY_TEMPLATES: List[Dict[str, Any]] = [
             "Alert the Marine customs post of an illegal night landing"
         ]
     },
-    # 4. Smuggling Caches
     {
         "type": DiscoveryType.SMUGGLING_CACHE,
         "title": "A Loose Floorboard Behind the Spice Stalls",
@@ -109,7 +108,6 @@ DISCOVERY_TEMPLATES: List[Dict[str, Any]] = [
             "Turn the cache in to customs for a finder's bounty"
         ]
     },
-    # 5. Wounded Sailors & Castaways
     {
         "type": DiscoveryType.WOUNDED_SAILOR,
         "title": "A Shivering Drifter in the Mist",
@@ -133,7 +131,6 @@ DISCOVERY_TEMPLATES: List[Dict[str, Any]] = [
             "Shout for the Marine guard to claim the deserter bounty"
         ]
     },
-    # 6. Lost Treasures & Relics
     {
         "type": DiscoveryType.LOST_TREASURE,
         "title": "A Barnacle-Encrusted Sea Chest in the Silt",
@@ -156,7 +153,6 @@ DISCOVERY_TEMPLATES: List[Dict[str, Any]] = [
             "Take it to the local tavern to auction to the highest bidder"
         ]
     },
-    # 7. Underground Games
     {
         "type": DiscoveryType.ILLEGAL_GAMBLING,
         "title": "A Midnight Dice Ring Behind the Cooperage",
@@ -168,7 +164,6 @@ DISCOVERY_TEMPLATES: List[Dict[str, Any]] = [
             "Threaten to call the watch unless cut in on the pot"
         ]
     },
-    # 8. Secret Passages
     {
         "type": DiscoveryType.HIDDEN_ROOM,
         "title": "A Concealed Cellar Behind the Keg Stacks",
@@ -184,10 +179,13 @@ DISCOVERY_TEMPLATES: List[Dict[str, Any]] = [
 
 
 class DiscoveryService:
-    """Authoritative contextual discovery engine for point-of-interest exploration and crime scenes."""
+    """Authoritative AI-driven contextual discovery engine with living story thread integration and procedural backup."""
 
     async def explore_location(self, character_id: str, location_id: Optional[str] = None) -> WorldDiscovery:
-        """Explores the surroundings, producing a context-sensitive, non-repeating narrative discovery."""
+        """
+        Explores the surroundings. Dynamically generates novel discoveries via Gemini AI
+        tailored to active story threads, world events, and environment, preventing repetition.
+        """
         db = db_manager.db
         char = await db.characters.find_one({"_id": character_id})
         loc_id = location_id or (char.get("location_id") if char else "port_azure")
@@ -201,42 +199,113 @@ class DiscoveryService:
         if existing:
             return WorldDiscovery(**existing)
 
-        # 2. Fetch titles of the player's recent discoveries to prevent repetitive encounters
+        # 2. Retrieve recent discoveries to enforce anti-repetition
         recent_cursor = db.discoveries.find(
             {"character_id": character_id}
         ).sort("discovered_at", -1).limit(6)
         recent_docs = await recent_cursor.to_list(length=6)
-        recent_titles = set(d.get("title") for d in recent_docs if d.get("title"))
+        recent_titles = [d.get("title") for d in recent_docs if d.get("title")]
 
-        # 3. Filter candidate templates matching the location or environment
-        loc_lower = loc_id.lower()
-        matching_candidates = []
-        for t in DISCOVERY_TEMPLATES:
-            # Check if environment matches
-            env_match = any(env in loc_lower for env in t["environments"])
-            if env_match and t["title"] not in recent_titles:
-                matching_candidates.append(t)
+        # 3. Retrieve living world context (Active Story Threads, NPCs, Character)
+        from app.game.director.thread_service import thread_service
+        from app.game.director.relationship_service import relationship_service
 
-        # 4. Fallback pool if all environment-matching templates have been seen recently
-        if not matching_candidates:
-            matching_candidates = [t for t in DISCOVERY_TEMPLATES if t["title"] not in recent_titles]
+        active_threads = await thread_service.list_active_threads()
+        thread_bullets = []
+        for t in active_threads[:4]:
+            facts = ", ".join(t.known_facts[-2:]) if t.known_facts else "No confirmed facts"
+            thread_bullets.append(f"- **{t.title}** ({t.status.value}): {t.summary} [Known clues: {facts}]")
+        threads_summary = "\n".join(thread_bullets) if thread_bullets else "No active story threads in this sector."
 
-        # 5. Ultimate fallback if literally all templates were seen
-        if not matching_candidates:
-            last_title = recent_docs[0].get("title") if recent_docs else None
-            matching_candidates = [t for t in DISCOVERY_TEMPLATES if t["title"] != last_title] or DISCOVERY_TEMPLATES
+        rels = await relationship_service.list_relationships(character_id)
+        npc_bullets = [f"{r.npc_name} ({r.level.value})" for r in rels[:4]] if rels else []
+        npcs_summary = ", ".join(npc_bullets) if npc_bullets else "None yet"
 
-        chosen = random.choice(matching_candidates)
+        char_name = char.get("name", "Wanderer") if char else "Wanderer"
+        char_faction = char.get("faction", "Independent") if char else "Independent"
+        char_rank = char.get("rank", "Deckhand") if char else "Deckhand"
 
-        disc = WorldDiscovery(
-            character_id=character_id,
-            discovery_type=chosen["type"],
-            title=chosen["title"],
-            description=chosen["description"],
-            location_id=loc_id,
-            suggested_actions=chosen["suggested_actions"]
-        )
+        # 4. Attempt AI-Powered Dynamic Generation via Gemini
+        ai_generated_discovery = None
+        try:
+            system_instruction = (
+                "You are the Master Game Director AI for Pirate Wars, a living gritty pirate world simulation.\n"
+                "Your objective is to generate an organic, dynamic, non-repetitive contextual discovery for a player exploring their surroundings.\n"
+                "RULES:\n"
+                "1. Deeply tie the discovery to the player's physical location, atmosphere, and the active story threads.\n"
+                "2. The discovery can be: an unexpected crime scene clue, dropped contraband, plotters meeting in secret, an injured or shady NPC, a concealed cache, an occult relic, an illegal game, or an old sea chart.\n"
+                "3. NEVER repeat or closely imitate any discovery the player has already encountered recently.\n"
+                "4. Provide 3 to 4 distinct, evocative action choices (under 75 characters each) offering moral, daring, cautious, or self-serving avenues.\n"
+                "5. Ensure the tone is authentic 18th-century nautical fiction (cutlasses, tallow lanterns, brine, colonial tensions)."
+            )
+            prompt = (
+                f"=== EXPLORING CHARACTER ===\n"
+                f"Name: {char_name} | Faction: {char_faction} | Rank: {char_rank}\n"
+                f"Current Location: {loc_id}\n"
+                f"Known Acquaintances: {npcs_summary}\n\n"
+                f"=== LIVING WORLD STORY THREADS ===\n"
+                f"{threads_summary}\n\n"
+                f"=== RECENT DISCOVERIES EXPERIENCED (STRICTLY DO NOT DUPLICATE) ===\n"
+                f"{', '.join(recent_titles) if recent_titles else 'None'}\n\n"
+                f"Generate a unique contextual exploration discovery for {char_name} at {loc_id}."
+            )
 
+            proposal: AIDiscoveryProposal = await gemini_provider.structured_output(
+                prompt=prompt,
+                schema=AIDiscoveryProposal,
+                system_instruction=system_instruction,
+                model=settings.GEMINI_MODEL_FAST
+            )
+
+            # Validate type against DiscoveryType enum
+            raw_type = (proposal.discovery_type or "SUSPICIOUS_BODY").upper().strip()
+            valid_type = DiscoveryType.SUSPICIOUS_BODY
+            for dt in DiscoveryType:
+                if dt.value == raw_type or dt.name == raw_type:
+                    valid_type = dt
+                    break
+
+            actions = [a.strip() for a in proposal.suggested_actions if a.strip()][:4]
+            if len(actions) < 2:
+                actions = ["Inspect the discovery closely", "Pocket what you can and slip away", "Alert local citizens"]
+
+            ai_generated_discovery = WorldDiscovery(
+                character_id=character_id,
+                discovery_type=valid_type,
+                title=proposal.title.strip(),
+                description=proposal.description.strip(),
+                location_id=loc_id,
+                suggested_actions=actions
+            )
+            logger.info(f"[AI DISCOVERY] Generated dynamic discovery '{ai_generated_discovery.title}' for {char_name} at {loc_id}.")
+
+        except Exception as e:
+            logger.warning(f"AI discovery generation fell back to procedural catalogue: {e}")
+
+        # 5. Procedural Fallback if AI fails or returns duplicate
+        if not ai_generated_discovery or ai_generated_discovery.title in recent_titles:
+            loc_lower = loc_id.lower()
+            matching_candidates = [
+                t for t in DISCOVERY_TEMPLATES
+                if any(env in loc_lower for env in t["environments"]) and t["title"] not in recent_titles
+            ]
+            if not matching_candidates:
+                matching_candidates = [t for t in DISCOVERY_TEMPLATES if t["title"] not in recent_titles]
+            if not matching_candidates:
+                last_title = recent_titles[0] if recent_titles else None
+                matching_candidates = [t for t in DISCOVERY_TEMPLATES if t["title"] != last_title] or DISCOVERY_TEMPLATES
+
+            chosen = random.choice(matching_candidates)
+            ai_generated_discovery = WorldDiscovery(
+                character_id=character_id,
+                discovery_type=chosen["type"],
+                title=chosen["title"],
+                description=chosen["description"],
+                location_id=loc_id,
+                suggested_actions=chosen["suggested_actions"]
+            )
+
+        disc = ai_generated_discovery
         await db.discoveries.insert_one(disc.to_mongo())
         await event_bus.publish(WorldEvent(
             event_type=EventType.DISCOVERY_MADE,
@@ -245,7 +314,7 @@ class DiscoveryService:
             visibility=EventVisibility.PRIVATE,
             state_delta={"discovery_id": disc.discovery_id, "type": disc.discovery_type.value, "title": disc.title}
         ))
-        logger.info(f"{char.get('name') if char else character_id} made a discovery: '{disc.title}'.")
+        logger.info(f"{char_name} recorded new discovery: '{disc.title}'.")
         return disc
 
     async def resolve_discovery_action(
@@ -254,7 +323,7 @@ class DiscoveryService:
         discovery_id: str,
         action_choice: str
     ) -> Dict[str, Any]:
-        """Resolves a player's strategic choice upon making a discovery, applying cascading consequences."""
+        """Resolves a player's strategic choice upon making a discovery, using AI reasoning with procedural fallback."""
         db = db_manager.db
         doc = await db.discoveries.find_one({"_id": discovery_id, "character_id": character_id})
         if not doc:
@@ -262,17 +331,13 @@ class DiscoveryService:
 
         discovery = WorldDiscovery(**doc)
         char = await db.characters.find_one({"_id": character_id})
-        choice_lower = action_choice.lower()
+        char_name = char.get("name", "Traveler") if char else "Traveler"
+        char_faction = char.get("faction", "Independent") if char else "Independent"
 
         from app.game.director.reward_service import reward_service
         from app.game.director.relationship_service import relationship_service
         from app.game.director.thread_service import thread_service
         from app.game.director.reputation_service import reputation_service
-
-        narrative = ""
-        rewards_granted = []
-        thread_updates = []
-        merged_thread = None
 
         # Mark discovery interacted immediately
         await db.discoveries.update_one(
@@ -280,223 +345,108 @@ class DiscoveryService:
             {"$set": {"interacted": True, "chosen_action": action_choice}}
         )
 
-        # -------------------------------------------------------------
-        # 1. SUSPICIOUS_BODY
-        # -------------------------------------------------------------
-        if discovery.discovery_type == DiscoveryType.SUSPICIOUS_BODY:
-            if "report" in choice_lower or "marine" in choice_lower:
-                case = await investigation_service.open_case(
-                    assigned_marine_id="marine_customs_inspector",
-                    title="Alleyway Homicide: Wharf Saltfish Warehouse",
-                    location_id=discovery.location_id,
-                    suspect_names=["Unknown Dock Prowler"]
+        # Retrieve active story threads for context
+        active_threads = await thread_service.list_active_threads()
+        threads_summary = "\n".join([f"- {t.title}: {t.summary}" for t in active_threads[:3]])
+
+        narrative = ""
+        rewards_granted: List[Dict[str, Any]] = []
+        thread_updates: List[str] = []
+        merged_thread = None
+
+        # 1. Attempt AI-driven consequence resolution
+        try:
+            res_system = (
+                "You are the Game Director for Pirate Wars evaluating a player's choice on a world discovery.\n"
+                "Determine the immediate consequence, any physical loot or gold found, reputation changes, "
+                "and whether this action uncovers a clue that updates or connects an active story thread.\n"
+                "Keep the outcome realistic to pirate and maritime law fiction."
+            )
+            res_prompt = (
+                f"Character: {char_name} (Faction: {char_faction})\n"
+                f"Encountered Discovery '{discovery.title}' ({discovery.discovery_type.value}):\n"
+                f"\"{discovery.description}\"\n\n"
+                f"Action Chosen by Player:\n> {action_choice}\n\n"
+                f"Active Story Threads:\n{threads_summary or 'None'}\n\n"
+                f"Resolve the physical outcome and state consequences for {char_name}."
+            )
+
+            resolution: AIDiscoveryResolution = await gemini_provider.structured_output(
+                prompt=res_prompt,
+                schema=AIDiscoveryResolution,
+                system_instruction=res_system,
+                model=settings.GEMINI_MODEL_FAST
+            )
+
+            narrative = resolution.outcome_narrative.strip()
+
+            # Process AI rewards
+            grants: List[RewardGrant] = []
+            if resolution.gold_reward > 0:
+                grants.append(RewardGrant(
+                    reward_type=RewardType.GOLD,
+                    amount=resolution.gold_reward,
+                    description=f"Acquired during exploration ({discovery.title})"
+                ))
+            if resolution.item_name:
+                item_slug = resolution.item_name.lower().replace(" ", "_")
+                grants.append(RewardGrant(
+                    reward_type=RewardType.ITEM,
+                    item_id=f"item_{item_slug[:16]}",
+                    item_name=resolution.item_name,
+                    quantity=1,
+                    description=f"Discovered while exploring: {discovery.title}"
+                ))
+
+            if grants:
+                await reward_service.grant(
+                    character_id=character_id,
+                    rewards=grants,
+                    reason=f"Discovery choice: {action_choice[:50]}"
                 )
-                await investigation_service.add_evidence(
-                    case_id=case.case_id,
-                    evidence_type=EvidenceType.TESTIMONY,
-                    title="Citizen Report: Body Found Behind Wharf",
-                    description=f"{char.get('name', 'Citizen')} reported finding a deceased sailor with blade wounds.",
-                    source=char.get("name", "Good Samaritan"),
-                    location_id=discovery.location_id,
-                    discovered_by_id=character_id
-                )
-                await reputation_service.adjust_reputation(character_id, {"marine": 15, "civilian": 10, "criminal": -5})
-                await reputation_service.record_action_traits(character_id, {"trustworthy": 5, "diplomatic": 3})
+                rewards_granted = [g.model_dump() for g in grants]
 
-                th = await thread_service.get_thread_by_title("The Port Azure Murders")
-                if th:
-                    await thread_service.update_thread(
-                        th.thread_id,
-                        new_fact=f"{char.get('name')} reported victim #4 to the Marines; Case #{case.case_number} officially opened.",
-                        log_entry=f"Marines secured the scene after {char.get('name')}'s report."
-                    )
-                narrative = f"You alerted the Marine patrol. Inspector Vance's men cordoned off the alleyway, opening Case #{case.case_number}. The officers note your civic cooperation with gratitude."
+            # Process AI reputation changes
+            if resolution.reputation_faction and resolution.reputation_delta != 0:
+                fac = resolution.reputation_faction.lower()
+                if fac in ["marine", "pirate", "merchant", "civilian", "criminal", "independent"]:
+                    await reputation_service.adjust_reputation(character_id, {fac: resolution.reputation_delta})
 
-            elif "search" in choice_lower or "pocket" in choice_lower or "satchel" in choice_lower:
-                pouch_gold = 25
+            # Process AI thread clues
+            if resolution.thread_clue:
+                thread_updates.append(resolution.thread_clue)
+                # Find matching thread or append to top active thread
+                for th in active_threads:
+                    if th.title.lower() in narrative.lower() or (resolution.merged_thread_title and th.title.lower() in resolution.merged_thread_title.lower()):
+                        await thread_service.update_thread(
+                            th.thread_id,
+                            new_fact=resolution.thread_clue,
+                            log_entry=f"Clue uncovered by {char_name} during exploration."
+                        )
+                        break
+
+            if resolution.merged_thread_title:
+                merged_thread = resolution.merged_thread_title
+
+        except Exception as e:
+            logger.warning(f"AI discovery resolution fell back to procedural logic: {e}")
+
+        # 2. Procedural Fallback if AI resolution returned empty narrative
+        if not narrative:
+            choice_lower = action_choice.lower()
+            if "search" in choice_lower or "pocket" in choice_lower or "pry" in choice_lower or "haul" in choice_lower or "smash" in choice_lower:
                 rew = [
-                    RewardGrant(reward_type=RewardType.GOLD, amount=pouch_gold, description="Pocketed from victim"),
-                    RewardGrant(
-                        reward_type=RewardType.ITEM,
-                        item_id="vial_apothecary_herb",
-                        item_name="Glass Vial with Green Wax Crest",
-                        quantity=1,
-                        description="An unbroken medicinal tincture bearing Mara's personal apothecary crest."
-                    )
+                    RewardGrant(reward_type=RewardType.GOLD, amount=30, description="Plundered during exploration"),
+                    RewardGrant(reward_type=RewardType.ITEM, item_id="cask_fine_rum", item_name="Cask of Fine Rum", quantity=1, description="Found during exploration")
                 ]
-                await reward_service.grant(character_id=character_id, rewards=rew, reason="Searched murder victim")
+                await reward_service.grant(character_id=character_id, rewards=rew, reason="Exploration search")
                 rewards_granted = [r.model_dump() for r in rew]
-                await reputation_service.record_action_traits(character_id, {"opportunistic": 5, "cautious": 2})
-
-                murder_th = await thread_service.get_thread_by_title("The Port Azure Murders")
-                apoth_th = await thread_service.get_thread_by_title("The Apothecary's Missing Shipment")
-                if murder_th and apoth_th:
-                    await thread_service.merge_threads(
-                        source_thread_id=apoth_th.thread_id,
-                        target_thread_id=murder_th.thread_id,
-                        merge_reason="Victim was carrying Mara's stolen medicinal herbal tincture with green wax seal!"
-                    )
-                    merged_thread = "The Apothecary's Missing Shipment → The Port Azure Murders"
-                    thread_updates.append("Merged 'The Apothecary's Missing Shipment' into 'The Port Azure Murders'!")
-
-                narrative = f"Kneeling by the body, you search the pockets. You find {pouch_gold} Gold and an intact glass vial bearing Mara the Apothecary's green wax seal! The missing medicinal cargo and the murders are connected!"
-
-            elif "track" in choice_lower or "trail" in choice_lower:
-                await reputation_service.record_action_traits(character_id, {"cautious": 4, "ambitious": 3})
-                narrative = "You examine the damp ground and follow a trail of smeared saltwater bootprints leading toward the abandoned boathouse at Skull Rock Anchorage."
-
-            elif "inspect" in choice_lower or "life" in choice_lower or "wound" in choice_lower:
-                narrative = "You lean over the victim. The mortal blow was clean and deliberate—inflicted with a curved naval cutlass. The victim's boots and coin purse are gone, but you spot a faint tattoo of a severed rope on the forearm."
-
+                narrative = f"You search the area thoroughly and secure valuable spoils: 30 Gold and a well-sealed Cask of Fine Rum!"
+            elif "report" in choice_lower or "marine" in choice_lower:
+                await reputation_service.adjust_reputation(character_id, {"marine": 10, "civilian": 5})
+                narrative = "You report your findings to the local authorities. The watch thanks you for your vigilance."
             else:
-                narrative = "You quietly step back into the shadows of the wharf, leaving the scene undisturbed as thick harbor fog rolls in."
-
-        # -------------------------------------------------------------
-        # 2. ABANDONED_CARGO
-        # -------------------------------------------------------------
-        elif discovery.discovery_type == DiscoveryType.ABANDONED_CARGO:
-            if "haul" in choice_lower or "salvage" in choice_lower or "pry" in choice_lower:
-                rew = [
-                    RewardGrant(reward_type=RewardType.GOLD, amount=35, description="Salvaged coin purse"),
-                    RewardGrant(reward_type=RewardType.ITEM, item_id="cask_fine_rum", item_name="Cask of Fine Rum", quantity=2, description="Well-sealed privateer rum casks")
-                ]
-                await reward_service.grant(character_id=character_id, rewards=rew, reason="Salvaged abandoned cargo")
-                rewards_granted = [r.model_dump() for r in rew]
-                await reputation_service.record_action_traits(character_id, {"opportunistic": 4, "resourceful": 4})
-                narrative = "You successfully haul the waterlogged cargo out of the brine. Prying open the seams reveals 35 Gold in waterproof oilcloth and two casks of prime rum!"
-
-            elif "report" in choice_lower:
-                await reputation_service.adjust_reputation(character_id, {"merchant": 12, "civilian": 8})
-                narrative = "You turn the cargo manifest over to the harbor customs clerk. Grateful for the honesty, the merchant guild hands you a 20 Gold finder's reward and promises favorable trade rates."
-
-            else:
-                narrative = "You stash the cargo behind the breakers and take careful bearings so you can retrieve it under cover of darkness."
-
-        # -------------------------------------------------------------
-        # 3. SECRET_MEETING
-        # -------------------------------------------------------------
-        elif discovery.discovery_type == DiscoveryType.SECRET_MEETING:
-            if "eavesdrop" in choice_lower or "listen" in choice_lower or "creep" in choice_lower:
-                await reputation_service.record_action_traits(character_id, {"stealthy": 5, "cautious": 3})
-                narrative = "Holding your breath behind the timber ribs, you overhear the pair: Marcus Vale has bribed the evening watch, and a contraband schooner is docking at Midnight Cove tonight."
-                thread_updates.append("Uncovered smuggling rendezvous schedule for Marcus Vale's crew.")
-
-            elif "confront" in choice_lower or "standoff" in choice_lower:
-                rew = [RewardGrant(reward_type=RewardType.GOLD, amount=40, description="Hush money extorted")]
-                await reward_service.grant(character_id=character_id, rewards=rew, reason="Extorted conspirators")
-                rewards_granted = [r.model_dump() for r in rew]
-                await reputation_service.adjust_reputation(character_id, {"criminal": 10, "marine": -10})
-                narrative = "You step from the shadows with blade partially drawn. Startled, the conspirators toss you a heavy purse of 40 Gold to buy your silence before fleeing into the alleys."
-
-            else:
-                narrative = "You slip away silently through the warehouse labyrinth, committing their faces and conversation to memory."
-
-        # -------------------------------------------------------------
-        # 4. SMUGGLING_CACHE
-        # -------------------------------------------------------------
-        elif discovery.discovery_type == DiscoveryType.SMUGGLING_CACHE:
-            if "pry" in choice_lower or "open" in choice_lower or "silver" in choice_lower or "slip" in choice_lower:
-                rew = [
-                    RewardGrant(reward_type=RewardType.ITEM, item_id="contraband_silver", item_name="Wrapped Silver Ingot", quantity=1, description="Refined silver stamped with colonial hallmark"),
-                    RewardGrant(reward_type=RewardType.GOLD, amount=45, description="Pouched cache coins")
-                ]
-                await reward_service.grant(character_id=character_id, rewards=rew, reason="Looted smuggling cache")
-                rewards_granted = [r.model_dump() for r in rew]
-                await reputation_service.record_action_traits(character_id, {"opportunistic": 5, "bold": 3})
-                narrative = "You pry up the concealed hatch. Inside is a wrapped silver bullion ingot and 45 Gold! You quickly pocket the loot and replace the cover."
-
-            elif "inform" in choice_lower or "customs" in choice_lower:
-                await reputation_service.adjust_reputation(character_id, {"marine": 20, "merchant": 10, "criminal": -15})
-                narrative = "You alert customs officers to the secret cache. The Marines seize the illegal bullion and award you an official commendation for aiding the Crown."
-
-            else:
-                narrative = "You quietly memorize the trapdoor location and melt back into the harbor crowd."
-
-        # -------------------------------------------------------------
-        # 5. WOUNDED_SAILOR
-        # -------------------------------------------------------------
-        elif discovery.discovery_type == DiscoveryType.WOUNDED_SAILOR:
-            if "offer" in choice_lower or "bread" in choice_lower or "rum" in choice_lower or "grog" in choice_lower:
-                await reputation_service.adjust_reputation(character_id, {"civilian": 15, "independent": 10})
-                await reputation_service.record_action_traits(character_id, {"compassionate": 5, "diplomatic": 3})
-                narrative = "You hand the shivering sailor a flask of warm rum and bread. Tears well in his eyes; he whispers of an uncharted reef where a sunken galleon's gold sits in four fathoms of water."
-
-            elif "ask" in choice_lower or "happen" in choice_lower:
-                narrative = "The sailor shivers as he speaks: 'Captain Redhook's brigantine chased our merchant caravel down three nights ago off Mistfall. They spared no one who raised a cutlass...'"
-
-            elif "demand" in choice_lower or "rob" in choice_lower or "intimidate" in choice_lower:
-                rew = [RewardGrant(reward_type=RewardType.GOLD, amount=12, description="Shaken from sailor")]
-                await reward_service.grant(character_id=character_id, rewards=rew, reason="Robbed wounded sailor")
-                rewards_granted = [r.model_dump() for r in rew]
-                await reputation_service.adjust_reputation(character_id, {"criminal": 8, "civilian": -12})
-                narrative = "You intimidate the helpless sailor, stripping 12 loose copper and silver coins from his rags before shoving him into the mud."
-
-            else:
-                narrative = "You glance past the huddled drifter and keep walking along the foggy dock."
-
-        # -------------------------------------------------------------
-        # 6. LOST_TREASURE
-        # -------------------------------------------------------------
-        elif discovery.discovery_type == DiscoveryType.LOST_TREASURE:
-            if "smash" in choice_lower or "pick" in choice_lower or "rope" in choice_lower or "haul" in choice_lower:
-                rew = [
-                    RewardGrant(reward_type=RewardType.GOLD, amount=60, description="Plundered from iron chest"),
-                    RewardGrant(reward_type=RewardType.ITEM, item_id="brass_astrolabe", item_name="Engraved Brass Astrolabe", quantity=1, description="Vintage navigational instrument valued by captains")
-                ]
-                await reward_service.grant(character_id=character_id, rewards=rew, reason="Opened lost treasure chest")
-                rewards_granted = [r.model_dump() for r in rew]
-                narrative = "With a sharp crack, the rusted lock gives way! Inside lies 60 gleaming Gold and an exquisite engraved brass astrolabe preserved in velvet."
-
-            elif "study" in choice_lower or "unseal" in choice_lower:
-                rew = [
-                    RewardGrant(reward_type=RewardType.MAP, item_id="chart_dead_mans_cove", item_name="Sea Chart: Dead Man's Cove", quantity=1, description="Hand-drawn chart revealing shoals and safe anchorages")
-                ]
-                await reward_service.grant(character_id=character_id, rewards=rew, reason="Studied lost nautical chart")
-                rewards_granted = [r.model_dump() for r in rew]
-                narrative = "You carefully unfurl the brittle vellum chart. It details safe passage coordinates through the treacherous razor reefs of Dead Man's Cove!"
-
-            else:
-                narrative = "You secure the find and prepare to take it to the tavern for valuation."
-
-        # -------------------------------------------------------------
-        # 7. ILLEGAL_GAMBLING
-        # -------------------------------------------------------------
-        elif discovery.discovery_type == DiscoveryType.ILLEGAL_GAMBLING:
-            if "toss" in choice_lower or "roll" in choice_lower or "barrel" in choice_lower:
-                # 60% win chance
-                if random.random() < 0.60:
-                    winnings = 30
-                    rew = [RewardGrant(reward_type=RewardType.GOLD, amount=winnings, description="Won at street dice")]
-                    await reward_service.grant(character_id=character_id, rewards=rew, reason="Won street dice game")
-                    rewards_granted = [r.model_dump() for r in rew]
-                    narrative = f"You step into the ring and toss your coin. The bone dice tumble across the barrel top—a pair of aces! A cheer erupts and you scoop 30 Gold into your pouch."
-                else:
-                    narrative = "You join the roll, but fortune is fickle on the docks. The dice betray you and the grinning dice-roller rakes in your wager."
-
-            elif "watch" in choice_lower or "spot" in choice_lower:
-                narrative = "Leaning against the wall, you watch the roller's fingers. The left die has lead shavings in the six-pip! You now hold leverage over the gambling ring."
-
-            else:
-                narrative = "You step into the circle with cutlass bared. Recognizing a seasoned rogue, the gamblers quickly divide a 20 Gold payoff to keep your mouth shut."
-
-        # -------------------------------------------------------------
-        # 8. HIDDEN_ROOM
-        # -------------------------------------------------------------
-        elif discovery.discovery_type == DiscoveryType.HIDDEN_ROOM:
-            if "descend" in choice_lower or "vault" in choice_lower or "speakeasy" in choice_lower:
-                rew = [RewardGrant(reward_type=RewardType.GOLD, amount=40, description="Found in hidden cellar")]
-                await reward_service.grant(character_id=character_id, rewards=rew, reason="Explored secret cellar")
-                rewards_granted = [r.model_dump() for r in rew]
-                narrative = "Creeping down the mossy stairs, you find a clandestine tasting vault. You uncover 40 Gold and a private cask of aged vintage wine."
-
-            else:
-                narrative = "You press your ear against the cellar seam. You hear merchant guildmasters whispering about an impending blockade off the southern cape."
-
-        # -------------------------------------------------------------
-        # 9. GENERAL FALLBACK
-        # -------------------------------------------------------------
-        else:
-            narrative = f"You proceed with caution and take action: {action_choice}. Your presence in the district does not go unnoticed."
+                narrative = f"You proceed cautiously: {action_choice}. Your actions ripple subtly across the harbor district."
 
         return {
             "success": True,

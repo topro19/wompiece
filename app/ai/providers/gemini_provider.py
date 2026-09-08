@@ -235,6 +235,32 @@ class GeminiAIProvider(AIProvider):
                     authorized_actions=[]
                 )
 
+        elif schema_name == "AIDiscoveryProposal":
+            return schema(
+                discovery_type="SMUGGLING_CACHE",
+                title="A Loose Floorboard Behind the Spice Stalls",
+                description="A scent of pungent medicinal sap and fine tobacco wafts from a concealed trapdoor beneath a stack of burlap grain sacks.",
+                suggested_actions=[
+                    "Pry open the trapdoor and examine the contents",
+                    "Mark the location to inform the Apothecary or Merchants",
+                    "Wait in the tavern to see who accesses the cache"
+                ],
+                connected_thread_title="The Apothecary's Missing Shipment",
+                reward_hint="Contraband goods and valuable merchant intel"
+            )
+
+        elif schema_name == "AIDiscoveryResolution":
+            return schema(
+                outcome_narrative="You carefully assess the situation and take decisive action, securing the area before anyone notices.",
+                gold_reward=30,
+                item_name="Contraband Spice Packet",
+                item_type="valuable",
+                reputation_faction="merchant",
+                reputation_delta=5,
+                thread_clue="Found merchant shipping seal corresponding to the missing cargo.",
+                merged_thread_title=None
+            )
+
         raise ValueError(f"No heuristic fallback defined for schema {schema_name}")
 
 
