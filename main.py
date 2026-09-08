@@ -56,6 +56,8 @@ async def keep_alive_loop():
             # 1. Background CPU activity: execute simulation high tick
             if db_manager.db:
                 await simulation_scheduler.tick_high()
+                # Automatically flush database state to disk snapshot
+                await db_manager.save_local_snapshot()
 
             # 2. Self-ping HTTP server every 60 seconds if hosted on Render to prevent idle spin-down
             if tick % 12 == 0:  # 12 * 5s = 60 seconds
@@ -101,7 +103,11 @@ async def run_bot():
         return
 
     logger.info("Starting Pirate Wars Discord Client...")
-    await bot.start(settings.DISCORD_TOKEN)
+    try:
+        await bot.start(settings.DISCORD_TOKEN)
+    finally:
+        await db_manager.save_local_snapshot()
+        await db_manager.disconnect()
 
 
 if __name__ == "__main__":
