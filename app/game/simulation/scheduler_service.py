@@ -115,8 +115,18 @@ class SimulationScheduler:
         details["crews_processed"] = crew_count
         details["mutinies_triggered"] = mutinies_triggered
 
-        # 4. Autonomous NPC Goal Progression
+        # 4. Autonomous NPC Goal Progression & World Population Routines
+        from app.game.npcs.npc_population_service import npc_population_service
+        sched_res = await npc_population_service.simulate_npc_schedules(current_hour=new_clock.hour)
+        details["npc_schedule_simulation"] = sched_res
+        entities_processed += sched_res.get("npcs_moved", 0)
+
         npc_actions = []
+        if sched_res.get("npcs_moved", 0) > 0:
+            npc_actions.append(f"{sched_res['npcs_moved']} NPCs traversed districts following their daily routines.")
+        if sched_res.get("goals_advanced", 0) > 0:
+            npc_actions.append(f"{sched_res['goals_advanced']} NPC goals progressed autonomously.")
+
         # A. Captain Redhook (Pirate Captain)
         redhook = await db.characters.find_one({"name": "Captain Redhook", "status": "ALIVE"})
         if redhook:
@@ -196,6 +206,13 @@ class SimulationScheduler:
 
         # 2. Market price shifts or reset daily revenue stats
         details["market_stability"] = "Normal colonial supply lines"
+
+        # 3. Maintain baseline world population across all islands
+        from app.game.npcs.npc_population_service import npc_population_service
+        seeded_count = await npc_population_service.ensure_world_populated()
+        details["npcs_baseline_seeded"] = seeded_count
+        entities_processed += seeded_count
+
 
         result = TickResult(
             tier=TickTier.LOW,

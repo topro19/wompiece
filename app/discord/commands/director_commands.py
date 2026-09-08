@@ -267,12 +267,18 @@ async def explore_command(interaction: discord.Interaction):
 
         discovery = await discovery_service.explore_location(char.character_id, char.location_id)
 
+        # Retrieve nearby NPCs who may be observing
+        from app.game.npcs.npc_population_service import npc_population_service
+        npcs = await npc_population_service.get_npcs_at_location(char.location_id)
+        witness_summary = ", ".join([f"{n.name} ({n.role_title})" for n in npcs[:3]]) if npcs else "None watching"
+
         embed = discord.Embed(
             title=f"🔎 Contextual Discovery: {discovery.title}",
             description=discovery.description,
             color=discord.Color.dark_gold()
         )
         embed.add_field(name="Category", value=discovery.discovery_type.value.capitalize(), inline=True)
+        embed.add_field(name="Nearby Inhabitants", value=witness_summary, inline=True)
 
         if discovery.suggested_actions:
             view = DiscoveryActionView(discovery_id=discovery.discovery_id, actions=discovery.suggested_actions)

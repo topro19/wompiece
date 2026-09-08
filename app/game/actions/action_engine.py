@@ -43,10 +43,16 @@ class ActionEngine:
 
         character = Character(**char_doc)
 
+        # Query nearby living NPCs
+        from app.game.npcs.npc_population_service import npc_population_service
+        npcs = await npc_population_service.get_npcs_at_location(character.location_id)
+        nearby_entities = [f"{n.name} ({n.role_title}, {n.current_activity})" for n in npcs[:8]]
+
         # 1. Build sandboxed prompt-injection safe context
         ctx = await context_builder.build_action_context(
             character=character,
-            untrusted_player_text=untrusted_action_text
+            untrusted_player_text=untrusted_action_text,
+            nearby_entities=nearby_entities
         )
 
         # 2. AI Reasoning & Proposal (Gemma 4 for fast frequent player actions)
