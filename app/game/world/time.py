@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Dict
 from pydantic import BaseModel, Field
 from app.database.connection import db_manager
 
@@ -72,5 +73,38 @@ class WorldTimeService:
             display_hour = 12
         return f"Day {clock.day}, {display_hour:02d}:{clock.minute:02d} {am_pm} ({clock.weather}, {clock.tide})"
 
+    def get_period_info(self, clock: WorldClock) -> Dict[str, str]:
+        """Returns structured diurnal period and general NPC routine behavior for the current time."""
+        h = clock.hour
+        if 6 <= h < 12:
+            return {
+                "period": "Morning",
+                "icon": "🌅",
+                "atmosphere": "The morning sun cuts through sea mist as harbor bells ring in the work shift.",
+                "npc_routine": "Dockworkers, sailors, and fishermen are actively loading cargo and checking nets."
+            }
+        elif 12 <= h < 18:
+            return {
+                "period": "Afternoon",
+                "icon": "☀️",
+                "atmosphere": "The midday sun beats down on bustling market stalls and stone avenues.",
+                "npc_routine": "Merchants haggle over colonial goods and Marine customs patrols walk the avenues."
+            }
+        elif 18 <= h < 24:
+            return {
+                "period": "Evening",
+                "icon": "🌇",
+                "atmosphere": "Lanterns flicker alive along tavern row as twilight envelops the harbor.",
+                "npc_routine": "Taverns and gambling dens are packed; pirates, sailors, and locals gather to drink and gossip."
+            }
+        else:
+            return {
+                "period": "Night",
+                "icon": "🌙",
+                "atmosphere": "Moonlight glints off dark waves under a canopy of sea fog and stars.",
+                "npc_routine": "The streets are mostly quiet; night sentries stand guard and smugglers operate in secret coves."
+            }
+
 
 world_time_service = WorldTimeService()
+

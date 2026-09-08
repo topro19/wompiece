@@ -14,7 +14,7 @@ from app.services.logger import logger
 
 # --- Living World UI & Multi-Turn Conversation Engine ---
 
-def build_conversation_embed(npc: WorldNPC, res: NPCInteractionResult, player_action_label: str) -> discord.Embed:
+def build_conversation_embed(npc: WorldNPC, res: NPCInteractionResult, player_action_label: str, clock_str: Optional[str] = None) -> discord.Embed:
     """Builds a constructive conversation embed showing player input, NPC response, and relationship state."""
     icon = "⚓" if npc.is_marine else ("🏴‍☠️" if npc.is_pirate else ("🛒" if npc.faction == NPCFaction.MERCHANT else "👤"))
     color = discord.Color.green() if res.trust_delta >= 0 else discord.Color.orange()
@@ -33,9 +33,13 @@ def build_conversation_embed(npc: WorldNPC, res: NPCInteractionResult, player_ac
         embed.add_field(name="Bond Shift", value=f"Trust: `{res.trust_delta:+d}` | Respect: `{res.respect_delta:+d}`", inline=True)
     if res.rewards_granted:
         embed.add_field(name="🎁 Outcomes", value="\n".join([f"• {r}" for r in res.rewards_granted]), inline=False)
+    
+    footer_text = f"🕒 In-Game Time: {clock_str}" if clock_str else ""
     if res.memory_logged:
-        embed.set_footer(text=f"Memory preserved: \"{res.memory_logged}\"")
+        footer_text = f"{footer_text} • Memory: \"{res.memory_logged}\"" if footer_text else f"Memory preserved: \"{res.memory_logged}\""
+    embed.set_footer(text=footer_text or "Type custom speech or choose an option below")
     return embed
+
 
 
 class NPCSpeechModal(discord.ui.Modal):
@@ -304,6 +308,24 @@ async def build_living_location_display(location_id: str, character_id: str, is_
     embed.add_field(name="Security Rating", value=f"{'⭐' * atmosphere.security_level} (Level {atmosphere.security_level})", inline=True)
     embed.add_field(name="Facilities", value=", ".join(loc.facilities) if loc and loc.facilities else "None", inline=False)
 
+    # In-Game Clock & Period
+    period_info = world_time_service.get_period_info(clock)
+    am_pm = "AM" if clock.hour < 12 else "PM"
+    disp_hour = clock.hour % 12
+    if disp_hour == 0:
+        disp_hour = 12
+    time_display = f"{disp_hour:02d}:{clock.minute:02d} {am_pm}"
+
+    embed.add_field(
+        name=f"🕒 In-Game Clock: Day {clock.day} • {time_display} ({period_info['icon']} {period_info['period']})",
+        value=(
+            f"**Weather:** `{clock.weather}` | **Tide:** `{clock.tide}`\n"
+            f"*{period_info['atmosphere']}*\n"
+            f"🧭 **Town Routine:** {period_info['npc_routine']}"
+        ),
+        inline=False
+    )
+
     # 1. Active Scenes
     if atmosphere.active_scenes:
         scene_lines = []
@@ -499,3 +521,44 @@ async def location_command(interaction: discord.Interaction):
     except Exception as e:
         logger.error(f"Error in location_command: {e}", exc_info=True)
         await interaction.followup.send(f"⚠️ Error loading location: {e}", ephemeral=True)
+
+
+@app_commands.command(name="time", description="Check the current in-game world clock, period of day, weather, tide, and routine phase.")
+async def time_command(interaction: discord.Interaction):
+    """Authoritative in-game world clock query."""
+    await interaction.response.defer(ephemeral=False)
+    try:
+        clock = await world_time_service.get_world_time()
+        period_info = world_time_service.get_period_info(clock)
+        am_pm = "AM" if clock.hour < 12 else "PM"
+        disp_hour = clock.hour % 12
+        if disp_hour == 0:
+            disp_hour = 12
+        time_12h = f"{disp_hour:02d}:{clock.minute:02d} {am_pm}"
+        time_24h = f"{clock.hour:02d}:{clock.minute:02d}"
+
+        color = discord.Color.gold() if period_info["period"] in ["Morning", "Afternoon"] else discord.Color.dark_purple()
+        embed = discord.Embed(
+            title=f"🕒 In-Game World Clock — {period_info['icon']} {period_info['period']}",
+            description=f"*{period_info['atmosphere']}*",
+            color=color
+        )
+        embed.add_field(name="📅 In-Game Date", value=f"**Day {clock.day}**", inline=True)
+        embed.add_field(name="⏰ Time of Day", value=f"**{time_12h}** (`{time_24h}`)", inline=True)
+        embed.add_field(name="🌅 Period", value=f"{period_info['icon']} {period_info['period']}", inline=True)
+        embed.add_field(name="⛅ Current Weather", value=f"`{clock.weather}`", inline=True)
+        embed.add_field(name="🌊 Ocean Tide", value=f"`{clock.tide}`", inline=True)
+        embed.add_field(name="🧭 District Routine Phase", value=period_info['npc_routine'], inline=False)
+        embed.set_footer(text="World time advances deterministically via the simulation clock.")
+
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        logger.error(f"Error in time_command: {e}", exc_info=True)
+        await interaction.followup.send(f"⚠️ Error loading in-game clock: {e}", ephemeral=True)
+
+
+@app_commands.command(name="clock", description="Check the current in-game world clock, period of day, weather, and tides.")
+async def clock_command(interaction: discord.Interaction):
+    """Alias for /time."""
+    await time_command.callback(interaction)
+

@@ -30,12 +30,16 @@ class PirateWarsBot(commands.Bot):
             start_command,
             profile_command,
             inventory_command,
-            location_command
+            location_command,
+            time_command,
+            clock_command
         )
         self.tree.add_command(start_command)
         self.tree.add_command(profile_command)
         self.tree.add_command(inventory_command)
         self.tree.add_command(location_command)
+        self.tree.add_command(time_command)
+        self.tree.add_command(clock_command)
         from app.discord.commands.crew_commands import crew_group
         self.tree.add_command(crew_group)
         from app.discord.commands.business_commands import business_group, alias_group
