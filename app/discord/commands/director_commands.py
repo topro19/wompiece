@@ -39,13 +39,18 @@ class DiscoveryChoiceButton(discord.ui.Button):
                 action_choice=self.action_choice
             )
 
+            narrative = result.get("narrative") or result.get("outcome_text", "You completed your investigation.")
+
             embed = discord.Embed(
                 title="🔍 Discovery Resolved",
-                description=result["outcome_text"],
+                description=narrative,
                 color=discord.Color.green()
             )
+            embed.add_field(name="Action Taken", value=f"*{self.action_choice}*", inline=False)
             if result.get("rewards"):
                 embed.add_field(name="Rewards Granted", value="\n".join([f"• {r.get('description')}" for r in result["rewards"]]), inline=False)
+            if result.get("thread_updates"):
+                embed.add_field(name="⚠️ Story Threads Updated!", value="\n".join([f"• {u}" for u in result["thread_updates"]]), inline=False)
             if result.get("merged_thread"):
                 embed.add_field(name="⚠️ Story Threads Merged!", value=f"Threads connected: {result['merged_thread']}", inline=False)
 

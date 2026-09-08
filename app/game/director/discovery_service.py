@@ -1,4 +1,4 @@
-﻿import random
+import random
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from app.database.connection import db_manager
@@ -209,6 +209,7 @@ class DiscoveryService:
             "discovery_id": discovery_id,
             "action_taken": action_choice,
             "narrative": narrative,
+            "outcome_text": narrative,
             "thread_updates": thread_updates
         }
 
