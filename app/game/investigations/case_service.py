@@ -8,6 +8,7 @@ from app.ai.providers.gemini_provider import gemini_provider
 from app.ai.schemas.marine_schemas import MarineHeadDecision
 from app.game.events.event_bus import event_bus, WorldEvent
 from app.game.events.event_types import EventType, EventVisibility
+from app.config.settings import settings
 from app.services.logger import logger
 
 
@@ -236,7 +237,7 @@ class InvestigationService:
             prompt=prompt,
             schema=MarineHeadDecision,
             system_instruction=system_instruction,
-            model="gemini-3-pro-preview"
+            model=settings.GEMINI_MODEL_REASONING
         )
 
         warrant = Warrant(

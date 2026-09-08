@@ -3,6 +3,7 @@ from app.database.connection import db_manager
 from app.game.models.character import Character
 from app.ai.providers.gemini_provider import gemini_provider
 from app.ai.schemas.npc_schemas import NPCReaction
+from app.config.settings import settings
 from app.game.director.relationship_service import relationship_service
 from app.services.logger import logger
 
@@ -106,7 +107,7 @@ class NPCEngine:
             prompt=prompt,
             schema=NPCReaction,
             system_instruction=system_instruction,
-            model="gemini-3-flash-preview"
+            model=settings.GEMINI_MODEL_FAST
         )
 
         # Log memory of this conversation

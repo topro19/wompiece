@@ -18,10 +18,16 @@ class Settings(BaseSettings):
     MONGO_DB_NAME: str = "pirate_wars"
     USE_MOCK_DB: bool = False
 
-    # AI Settings (Gemini API)
+    # AI Settings (Gemini & Gemma models)
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL_FAST: str = "gemini-3.6-flash"
-    GEMINI_MODEL_REASONING: str = "gemini-3.6-flash"
+    GEMINI_MODEL_FAST: str = "gemini-3.5-flash-lite"
+    GEMINI_MODEL_REASONING: str = "gemini-3.1-flash-lite"
+    AI_FALLBACK_MODELS: list[str] = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemma-4-31b-it",
+        "gemma-4-26b-a4b-it",
+    ]
 
     # Simulation Parameters
     WORLD_TICK_INTERVAL_SECONDS: int = 60

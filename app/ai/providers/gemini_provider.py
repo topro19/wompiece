@@ -27,6 +27,12 @@ class GeminiAIProvider(AIProvider):
             except Exception as e:
                 logger.warning(f"Could not initialize Google Gemini client ({e}). Operating in deterministic heuristic mode.")
 
+    def _build_candidate_models(self, preferred_model: Optional[str] = None) -> list[str]:
+        pool = list(settings.AI_FALLBACK_MODELS)
+        if preferred_model and preferred_model in pool:
+            return [preferred_model] + [m for m in pool if m != preferred_model]
+        return pool
+
     async def structured_output(
         self,
         prompt: str,
@@ -34,15 +40,11 @@ class GeminiAIProvider(AIProvider):
         system_instruction: str = "",
         model: Optional[str] = None
     ) -> T:
-        primary_model = model or settings.GEMINI_MODEL_FAST
-        candidate_models = [primary_model]
-        for fallback_m in ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.5-flash-lite"]:
-            if fallback_m not in candidate_models:
-                candidate_models.append(fallback_m)
+        candidate_models = self._build_candidate_models(model or settings.GEMINI_MODEL_FAST)
 
         if self._client:
             last_err = None
-            for candidate in candidate_models:
+            for idx, candidate in enumerate(candidate_models):
                 try:
                     config = types.GenerateContentConfig(
                         system_instruction=system_instruction,
@@ -55,11 +57,14 @@ class GeminiAIProvider(AIProvider):
                         contents=prompt,
                         config=config
                     )
+                    if idx > 0:
+                        logger.info(f"Fallback model '{candidate}' successfully resolved structured output.")
                     return schema.model_validate_json(response.text)
                 except Exception as e:
                     last_err = e
+                    logger.warning(f"Model '{candidate}' error: {e}. Falling back to next model in chain...")
                     continue
-            logger.error(f"Gemini API structured output error across all models: {last_err}. Falling back to deterministic resolver.")
+            logger.error(f"All configured AI models ({candidate_models}) failed: {last_err}. Falling back to deterministic resolver.")
 
         # Deterministic Heuristic Fallback
         return self._heuristic_fallback(prompt, schema)
@@ -70,11 +75,10 @@ class GeminiAIProvider(AIProvider):
         system_instruction: str = "",
         model: Optional[str] = None
     ) -> str:
-        primary_model = model or settings.GEMINI_MODEL_FAST
-        candidate_models = [primary_model, "gemini-3.6-flash", "gemini-flash-latest", "gemini-3.5-flash-lite"]
+        candidate_models = self._build_candidate_models(model or settings.GEMINI_MODEL_FAST)
 
         if self._client:
-            for candidate in candidate_models:
+            for idx, candidate in enumerate(candidate_models):
                 try:
                     config = types.GenerateContentConfig(
                         system_instruction=system_instruction,
@@ -85,8 +89,11 @@ class GeminiAIProvider(AIProvider):
                         contents=prompt,
                         config=config
                     )
+                    if idx > 0:
+                        logger.info(f"Fallback model '{candidate}' successfully generated prose.")
                     return response.text
                 except Exception as e:
+                    logger.warning(f"Model '{candidate}' prose generation error: {e}. Trying next model...")
                     continue
 
         return "The ocean winds howl across the docks as waves crash against the weathered wooden pilings."

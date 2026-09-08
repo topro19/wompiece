@@ -1,4 +1,4 @@
-﻿from http.server import BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler
 import json
 import os
 
@@ -29,7 +29,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         <div class="grid">
             <div class="card">
                 <h3>SIMULATION ENGINE</h3>
-                <p>Gemini 3.6 Flash</p>
+                <p>Gemini 3.5 Flash Lite</p>
             </div>
             <div class="card">
                 <h3>REGISTERED COMMANDS</h3>
