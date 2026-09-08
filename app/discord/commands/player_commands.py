@@ -76,6 +76,10 @@ async def start_command(interaction: discord.Interaction, name: str, faction: ap
             faction=chosen_faction
         )
 
+        # Initialize the living director world (goals, threads, opportunities, and NPC bonds)
+        from app.game.director.director_service import game_director
+        await game_director.initialize_player_world(char.character_id, char.location_id, char.faction.value)
+
         clock = await world_time_service.get_world_time()
         clock_str = world_time_service.format_clock(clock)
         start_loc = location_service.get_location(char.location_id)
@@ -87,6 +91,8 @@ async def start_command(interaction: discord.Interaction, name: str, faction: ap
                 f"**Path:** {char.faction.value.capitalize()}\n"
                 f"**Initial Rank:** {char.rank}\n"
                 f"**Purse:** {char.wealth} gold\n\n"
+                f"🌟 **The Living World is Active**: The port around you is alive with opportunities, mysteries, and deep relationships.\n"
+                f"Type `/home` anytime to open your living dossier, or `/explore` to inspect your surroundings.\n\n"
                 f"⚠️ **True One-Life System**: Your character has exactly one life. If you fall in combat or execution, "
                 f"your character permanently dies and becomes part of the world's history."
             ),
@@ -132,7 +138,21 @@ async def profile_command(interaction: discord.Interaction):
     embed.add_field(name="Current Location", value=loc_name, inline=True)
     embed.add_field(name="Crew", value=char.crew_id or "Independent (None)", inline=True)
 
-    embed.set_footer(text="Authoritative State Record")
+    # Multi-dimensional reputations & Ambition
+    from app.game.director.reputation_service import reputation_service
+    reps = await reputation_service.get_all_reputations(char.character_id)
+    rep_strings = []
+    for f, v in reps.items():
+        standing = await reputation_service.get_reputation_standing(v)
+        rep_strings.append(f"{f}: {standing} ({v:+d})")
+
+    embed.add_field(name="⚖️ Reputations", value="\n".join(rep_strings), inline=False)
+    if char.long_term_ambition:
+        embed.add_field(name="👑 Long-Term Ambition", value=char.long_term_ambition, inline=False)
+    if char.behavioral_traits:
+        embed.add_field(name="🎭 Known Behavioral Traits", value=", ".join(char.behavioral_traits), inline=False)
+
+    embed.set_footer(text="Authoritative State Record | Check /home for active threads and opportunities")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 

@@ -3,6 +3,7 @@ from app.database.connection import db_manager
 from app.game.models.character import Character
 from app.ai.providers.gemini_provider import gemini_provider
 from app.ai.schemas.npc_schemas import NPCReaction
+from app.game.director.relationship_service import relationship_service
 from app.services.logger import logger
 
 
@@ -24,12 +25,39 @@ NPC_PERSONAS: Dict[str, Dict[str, Any]] = {
         "personality": "Neutral civilian, observes everything, fears pirates and respects Marine authority.",
         "secrets": ["Notices Marcus Vale visits the rear storage crates late at night."],
         "faction": "Civilian"
+    },
+    "Mara": {
+        "title": "Herbalist & Proprietor of Azure Remedies",
+        "personality": "Quiet, observant, fiercely independent. Deeply compassionate toward dockworkers, suspicious of corrupt officials and extortionists like Marcus Vale.",
+        "secrets": ["Knows the rare moon-lily needed for antitoxin grows near Dead Man's Cove.", "Refuses to pay protection gold to Marcus Vale's enforcers."],
+        "faction": "Civilian"
+    },
+    "Thomas": {
+        "title": "Dockside Provisioner & Ex-Smuggler",
+        "personality": "Calculating, pragmatic, values coin and reliable couriers over ideological causes.",
+        "secrets": ["Supplies counterfeit Marine passage seals to pirate captains."],
+        "faction": "Merchant"
+    },
+    "Inspector Vance": {
+        "title": "Marine Investigative Officer",
+        "personality": "Relentless, cynical, smells deceit easily. Considers Port Azure a nest of vipers requiring iron discipline.",
+        "secrets": ["Suspects the dockmaster is taking bribes from Marcus Vale.", "Carries a personal vendetta against Captain Redhook."],
+        "faction": "Marine"
+    },
+    "Madame Corbeau": {
+        "title": "High-Stakes Gambler & Information Broker",
+        "personality": "Enigmatic, theatrical, thrives on calculated risk and juicy gossip. Never forgets a wager or a slight.",
+        "secrets": ["Holds blackmail letters on three prominent Marine commanders.", "Runs an illegal betting ring from The Golden Anchor cellar."],
+        "faction": "Independent"
     }
 }
 
 
 class NPCEngine:
-    """Simulates autonomous NPC dialogue, emotional shifts, and secret knowledge protection."""
+    """
+    Simulates autonomous NPC dialogue, emotional shifts, secret knowledge protection,
+    and deep memory recall based on past player interactions.
+    """
 
     async def converse_with_npc(
         self,
@@ -50,14 +78,20 @@ class NPCEngine:
             "faction": "Civilian"
         })
 
+        # Fetch living memory and relationship history
+        memory_context = await relationship_service.get_npc_memory_context(character_id, npc_name)
+
         system_instruction = (
             f"You are roleplaying as {npc_name} ({persona['title']}) in Pirate Wars.\n"
             f"Personality: {persona['personality']}\n"
             f"Private Secrets: {', '.join(persona['secrets']) if persona['secrets'] else 'None'}\n\n"
+            f"YOUR PAST MEMORY & RELATIONSHIP WITH THIS TRAVELER:\n{memory_context}\n\n"
             f"RULES:\n"
             f"1. Stay strictly in character.\n"
-            f"2. Never voluntarily confess secret criminal ties to Marines unless heavily cornered with proof.\n"
-            f"3. Generate an NPCReaction JSON with dialogue, internal_thought, and body language."
+            f"2. Let your tone reflect your standing (trust, fear, respect, affection) with {player_name}.\n"
+            f"3. Never voluntarily confess secret criminal ties unless high trust or cornered.\n"
+            f"4. If favors are owed or past promises were made, reference them naturally.\n"
+            f"5. Generate an NPCReaction JSON with dialogue, internal_thought, and body language."
         )
 
         prompt = (
@@ -73,6 +107,13 @@ class NPCEngine:
             schema=NPCReaction,
             system_instruction=system_instruction,
             model="gemini-3-flash-preview"
+        )
+
+        # Log memory of this conversation
+        await relationship_service.adjust_relationship(
+            character_id=character_id,
+            npc_name=npc_name,
+            memory_event=f"Spoke to player: \"{player_speech[:60]}...\""
         )
 
         logger.info(f"[NPC DIALOGUE] {npc_name} replied to {player_name}: \"{reaction.dialogue}\"")

@@ -127,6 +127,15 @@ async def test_ai_marine_head_warrant_evaluation(test_db):
         location_id="port_azure_docks",
         discovered_by_id=marine.character_id
     )
+    await investigation_service.add_evidence(
+        case_id=case.case_id,
+        evidence_type=EvidenceType.TESTIMONY,
+        title="Dockhand Eyewitness Statement",
+        description="Dockworker sworn deposition seeing Marcus Vale offload unmanifested naval crates into The Golden Anchor cellar.",
+        source="Dockhand Interrogation",
+        location_id="port_azure_docks",
+        discovered_by_id=marine.character_id
+    )
 
     # 3. Petition WITH evidence -> Expected: AUTHORIZED
     warrant_approved = await investigation_service.request_warrant_review(

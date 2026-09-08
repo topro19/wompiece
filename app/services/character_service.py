@@ -65,6 +65,12 @@ class CharacterService:
 
         return Character(**char_doc)
 
+    async def get_character(self, character_id: str) -> Optional[Character]:
+        """Retrieves a character by their authoritative character ID."""
+        db = db_manager.db
+        char_doc = await db.characters.find_one({"_id": character_id})
+        return Character(**char_doc) if char_doc else None
+
     async def create_character(
         self,
         user_id: str,

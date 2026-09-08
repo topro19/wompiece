@@ -68,6 +68,36 @@ class PirateWarsBot(commands.Bot):
         self.tree.add_command(intel_group)
         self.tree.add_command(protect_group)
         self.tree.add_command(salvage_group)
+
+        # Game Director & Living World Commands
+        from app.discord.commands.director_commands import (
+            home_command,
+            opportunities_command,
+            threads_command,
+            people_command,
+            explore_command,
+            goals_command
+        )
+        self.tree.add_command(home_command)
+        self.tree.add_command(opportunities_command)
+        self.tree.add_command(threads_command)
+        self.tree.add_command(people_command)
+        self.tree.add_command(explore_command)
+        self.tree.add_command(goals_command)
+
+        # World Map, Navigation, & Timeline Commands
+        from app.discord.commands.map_commands import (
+            map_command,
+            travel_command,
+            mark_command,
+            markers_command,
+            timeline_command
+        )
+        self.tree.add_command(map_command)
+        self.tree.add_command(travel_command)
+        self.tree.add_command(mark_command)
+        self.tree.add_command(markers_command)
+        self.tree.add_command(timeline_command)
         
         # Sync slash commands with Discord
         try:
