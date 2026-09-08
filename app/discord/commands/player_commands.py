@@ -8,22 +8,102 @@ from app.game.world.location import location_service
 from app.game.world.time import world_time_service
 from app.game.npcs.npc_models import WorldNPC, NPCFaction
 from app.game.npcs.npc_encounter_service import npc_encounter_service, LocationAtmosphere, NPCApproach
-from app.game.npcs.npc_interaction_service import npc_interaction_service
+from app.game.npcs.npc_interaction_service import npc_interaction_service, NPCInteractionResult
 from app.services.logger import logger
 
 
-# --- Living World UI Components ---
+# --- Living World UI & Multi-Turn Conversation Engine ---
 
-class NPCOptionButton(discord.ui.Button):
-    """Button triggering a specific action with a chosen NPC (e.g. Talk, Rumors, Bribe, Recruit)."""
-    def __init__(self, npc_id: str, npc_name: str, action_type: str, label: str, emoji: str, style: discord.ButtonStyle = discord.ButtonStyle.secondary):
-        super().__init__(style=style, label=label, emoji=emoji)
-        self.npc_id = npc_id
-        self.npc_name = npc_name
-        self.action_type = action_type
+def build_conversation_embed(npc: WorldNPC, res: NPCInteractionResult, player_action_label: str) -> discord.Embed:
+    """Builds a constructive conversation embed showing player input, NPC response, and relationship state."""
+    icon = "⚓" if npc.is_marine else ("🏴‍☠️" if npc.is_pirate else ("🛒" if npc.faction == NPCFaction.MERCHANT else "👤"))
+    color = discord.Color.green() if res.trust_delta >= 0 else discord.Color.orange()
+
+    embed = discord.Embed(
+        title=f"{icon} Conversation with {res.npc_name}",
+        description=(
+            f"**You:** *\"{player_action_label}\"*\n\n"
+            f"**{res.npc_name} ({res.npc_role}):**\n"
+            f"{res.dialogue}"
+        ),
+        color=color
+    )
+    embed.add_field(name="Standing", value=f"**{res.relationship_standing}**", inline=True)
+    if res.trust_delta or res.respect_delta:
+        embed.add_field(name="Bond Shift", value=f"Trust: `{res.trust_delta:+d}` | Respect: `{res.respect_delta:+d}`", inline=True)
+    if res.rewards_granted:
+        embed.add_field(name="🎁 Outcomes", value="\n".join([f"• {r}" for r in res.rewards_granted]), inline=False)
+    if res.memory_logged:
+        embed.set_footer(text=f"Memory preserved: \"{res.memory_logged}\"")
+    return embed
+
+
+class NPCSpeechModal(discord.ui.Modal):
+    """Modal allowing the player to input custom freeform speech or action to the NPC."""
+    def __init__(self, npc: WorldNPC, parent_view: discord.ui.View):
+        super().__init__(title=f"Speak with {npc.name[:30]}")
+        self.npc = npc
+        self.parent_view = parent_view
+
+        self.speech_input = discord.ui.TextInput(
+            label="What do you say or do?",
+            placeholder="e.g. 'I'm looking for work on the docks. Know anyone hiring?' or 'What's the word on the Marine cutter?'",
+            style=discord.TextStyle.paragraph,
+            required=True,
+            max_length=300
+        )
+        self.add_item(self.speech_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        user_id = str(interaction.user.id)
+        char = await character_service.get_active_character_by_user(user_id)
+        if not char:
+            await interaction.followup.send("No active living character.", ephemeral=True)
+            return
+
+        speech_text = self.speech_input.value.strip()
+
+        try:
+            res = await npc_interaction_service.interact(
+                character_id=char.character_id,
+                npc_id=self.npc.npc_id,
+                action_type="CUSTOM_SPEECH",
+                player_speech=speech_text
+            )
+
+            embed = build_conversation_embed(self.npc, res, player_action_label=speech_text)
+            try:
+                await interaction.edit_original_response(embed=embed, view=self.parent_view)
+            except Exception:
+                if interaction.message:
+                    await interaction.message.edit(embed=embed, view=self.parent_view)
+        except Exception as e:
+            logger.error(f"Error submitting custom speech: {e}", exc_info=True)
+            await interaction.followup.send(f"⚠️ Speech failed: {e}", ephemeral=True)
+
+
+class OpenSpeechModalButton(discord.ui.Button):
+    """Button triggering the custom speech modal."""
+    def __init__(self, npc: WorldNPC, row: int = 0):
+        super().__init__(style=discord.ButtonStyle.primary, label="Say / Do Something", emoji="✍️", row=row)
+        self.npc = npc
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        modal = NPCSpeechModal(npc=self.npc, parent_view=self.view)
+        await interaction.response.send_modal(modal)
+
+
+class NPCOptionButton(discord.ui.Button):
+    """Button triggering a preset action while keeping the conversation view active."""
+    def __init__(self, npc: WorldNPC, action_type: str, label: str, emoji: str, style: discord.ButtonStyle, row: int = 0):
+        super().__init__(style=style, label=label, emoji=emoji, row=row)
+        self.npc = npc
+        self.action_type = action_type
+        self.button_label = label
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         user_id = str(interaction.user.id)
         char = await character_service.get_active_character_by_user(user_id)
         if not char:
@@ -33,39 +113,49 @@ class NPCOptionButton(discord.ui.Button):
         try:
             res = await npc_interaction_service.interact(
                 character_id=char.character_id,
-                npc_id=self.npc_id,
+                npc_id=self.npc.npc_id,
                 action_type=self.action_type
             )
 
-            color = discord.Color.green() if res.trust_delta >= 0 else discord.Color.orange()
-            embed = discord.Embed(
-                title=f"💬 Conversation with {res.npc_name}",
-                description=res.dialogue,
-                color=color
-            )
-            embed.add_field(name="Role", value=res.npc_role, inline=True)
-            embed.add_field(name="Relationship Standing", value=f"**{res.relationship_standing}**", inline=True)
-            if res.trust_delta or res.respect_delta:
-                embed.add_field(name="Bond Impact", value=f"Trust: `{res.trust_delta:+d}` | Respect: `{res.respect_delta:+d}`", inline=True)
-            if res.rewards_granted:
-                embed.add_field(name="🎁 Outcomes", value="\n".join([f"• {r}" for r in res.rewards_granted]), inline=False)
-            if res.memory_logged:
-                embed.set_footer(text=f"Memory preserved: \"{res.memory_logged}\"")
-
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            embed = build_conversation_embed(self.npc, res, player_action_label=f"[{self.button_label}]")
+            await interaction.edit_original_response(embed=embed, view=self.view)
         except Exception as e:
-            logger.error(f"Error interacting with NPC: {e}", exc_info=True)
+            logger.error(f"Error executing NPC option: {e}", exc_info=True)
             await interaction.followup.send(f"⚠️ Interaction failed: {e}", ephemeral=True)
 
 
+class NPCLeaveButton(discord.ui.Button):
+    """Gracefully steps away from the conversation."""
+    def __init__(self, npc: WorldNPC, row: int = 2):
+        super().__init__(style=discord.ButtonStyle.secondary, label="Step Away / Leave", emoji="👋", row=row)
+        self.npc = npc
+
+    async def callback(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title=f"Farewell: {self.npc.name}",
+            description=f"You nod to {self.npc.name} and step back into the district street.",
+            color=discord.Color.dark_grey()
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+
 class NPCActionsView(discord.ui.View):
-    """View presenting interaction options for a chosen NPC."""
+    """View providing both custom natural-language input and persistent preset options."""
     def __init__(self, npc: WorldNPC):
-        super().__init__(timeout=120)
-        self.add_item(NPCOptionButton(npc.npc_id, npc.name, "TALK", "Talk & Greet", "💬", discord.ButtonStyle.primary))
-        self.add_item(NPCOptionButton(npc.npc_id, npc.name, "ASK_RUMORS", "Inquire for Rumors", "📜", discord.ButtonStyle.secondary))
-        self.add_item(NPCOptionButton(npc.npc_id, npc.name, "BRIBE_50", "Offer Bribe (50 Gold)", "💰", discord.ButtonStyle.secondary))
-        self.add_item(NPCOptionButton(npc.npc_id, npc.name, "RECRUIT", "Recruit to Crew", "🤝", discord.ButtonStyle.success))
+        super().__init__(timeout=300)
+        self.npc = npc
+
+        # Row 0: Custom Speech & Rumors
+        self.add_item(OpenSpeechModalButton(npc, row=0))
+        self.add_item(NPCOptionButton(npc, "ASK_RUMORS", "Inquire for Rumors", "📜", discord.ButtonStyle.secondary, row=0))
+
+        # Row 1: Work / Jobs & Recruitment
+        self.add_item(NPCOptionButton(npc, "ASK_WORK", "Inquire for Work / Jobs", "💼", discord.ButtonStyle.secondary, row=1))
+        self.add_item(NPCOptionButton(npc, "RECRUIT", "Recruit to Crew", "🤝", discord.ButtonStyle.success, row=1))
+
+        # Row 2: Bribe & Leave
+        self.add_item(NPCOptionButton(npc, "BRIBE_50", "Offer Bribe (50 Gold)", "💰", discord.ButtonStyle.secondary, row=2))
+        self.add_item(NPCLeaveButton(npc, row=2))
 
 
 class NPCSelectMenu(discord.ui.Select):
@@ -97,14 +187,15 @@ class NPCSelectMenu(discord.ui.Select):
             return
 
         view = NPCActionsView(chosen_npc)
+        icon = "⚓" if chosen_npc.is_marine else ("🏴‍☠️" if chosen_npc.is_pirate else ("🛒" if chosen_npc.faction == NPCFaction.MERCHANT else "👤"))
         embed = discord.Embed(
-            title=f"Approached: {chosen_npc.name}",
+            title=f"{icon} Approached: {chosen_npc.name}",
             description=(
                 f"**Role:** {chosen_npc.role_title}\n"
                 f"**Current Action:** *{chosen_npc.current_activity}*\n"
                 f"**Personality:** {', '.join(chosen_npc.personality)}\n"
                 f"**Purse:** {chosen_npc.wealth} Gold\n\n"
-                f"Choose how you wish to engage with them:"
+                f"Choose how you wish to engage with them, or use **[✍️ Say / Do Something]** to speak naturally:"
             ),
             color=discord.Color.teal()
         )
@@ -113,10 +204,9 @@ class NPCSelectMenu(discord.ui.Select):
 
 class NPCApproachButton(discord.ui.Button):
     """Button representing one of the direct reaction choices for an approaching NPC."""
-    def __init__(self, npc_id: str, npc_name: str, action_label: str):
+    def __init__(self, npc: WorldNPC, action_label: str):
         super().__init__(style=discord.ButtonStyle.primary, label=action_label[:80], emoji="⚡")
-        self.npc_id = npc_id
-        self.npc_name = npc_name
+        self.npc = npc
         self.action_label = action_label
 
     async def callback(self, interaction: discord.Interaction):
@@ -130,24 +220,15 @@ class NPCApproachButton(discord.ui.Button):
         try:
             res = await npc_interaction_service.interact(
                 character_id=char.character_id,
-                npc_id=self.npc_id,
+                npc_id=self.npc.npc_id,
                 action_type=self.action_label,
                 player_speech=self.action_label
             )
 
-            embed = discord.Embed(
-                title=f"⚡ Encounter Resolved: {self.npc_name}",
-                description=res.dialogue,
-                color=discord.Color.gold()
-            )
-            embed.add_field(name="Action Taken", value=f"*{self.action_label}*", inline=True)
-            embed.add_field(name="Standing", value=res.relationship_standing, inline=True)
-            if res.rewards_granted:
-                embed.add_field(name="Outcomes", value="\n".join([f"• {r}" for r in res.rewards_granted]), inline=False)
-            if res.memory_logged:
-                embed.set_footer(text=res.memory_logged)
-
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            # Continue the conversation by attaching the full NPCActionsView
+            view = NPCActionsView(self.npc)
+            embed = build_conversation_embed(self.npc, res, player_action_label=self.action_label)
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         except Exception as e:
             logger.error(f"Error in approach callback: {e}", exc_info=True)
             await interaction.followup.send(f"⚠️ Action failed: {e}", ephemeral=True)
@@ -190,12 +271,14 @@ class LivingLocationView(discord.ui.View):
 
         # 2. Approaching NPC Quick Action Buttons (Row 1)
         if atmosphere.approaching_npc:
-            for act in atmosphere.approaching_npc.available_actions[:3]:
-                self.add_item(NPCApproachButton(
-                    npc_id=atmosphere.approaching_npc.npc_id,
-                    npc_name=atmosphere.approaching_npc.npc_name,
-                    action_label=act
-                ))
+            # Find the actual NPC object for approach buttons
+            approaching_obj = next((n for n in atmosphere.present_npcs if n.npc_id == atmosphere.approaching_npc.npc_id), None)
+            if approaching_obj:
+                for act in atmosphere.approaching_npc.available_actions[:3]:
+                    self.add_item(NPCApproachButton(
+                        npc=approaching_obj,
+                        action_label=act
+                    ))
 
         # 3. Movement Destinations
         destinations = location_service.get_destinations(current_location_id)

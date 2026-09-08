@@ -162,6 +162,50 @@ async def test_npc_interaction_and_relationship_memory():
 
 
 @pytest.mark.asyncio
+async def test_npc_custom_speech_and_work_inquiry():
+    """Verify player custom speech input and work inquiries produce constructive dialogue."""
+    dockworker = WorldNPC(
+        name="Calico 'Scar-Face' Low",
+        faction=NPCFaction.CIVILIAN,
+        role=NPCArchetype.DOCKWORKER,
+        occupation="Dockworker",
+        island_id="Azure Island",
+        home_location_id="port_azure_docks",
+        location_id="port_azure_docks",
+        personality=["Ruthless", "Suspicious", "Proud"],
+        wealth=41
+    )
+    await db_manager.db.npcs.insert_one(dockworker.to_mongo())
+
+    await db_manager.db.characters.insert_one({
+        "_id": "char_player_custom",
+        "name": "gintoki shwarma",
+        "faction": "PIRATE",
+        "wealth": 100
+    })
+
+    # 1. Custom Player Input (e.g. asking who runs the docks)
+    custom_res = await npc_interaction_service.interact(
+        character_id="char_player_custom",
+        npc_id=dockworker.npc_id,
+        action_type="CUSTOM_SPEECH",
+        player_speech="Who runs this stretch of docks, and what kind of work can a stout pirate find here?"
+    )
+    assert custom_res.npc_name == dockworker.name
+    assert len(custom_res.dialogue) > 20
+    assert not custom_res.dialogue.endswith("Keep your wits sharp in this district.'\"")
+
+    # 2. Inquire for Work / Jobs
+    work_res = await npc_interaction_service.interact(
+        character_id="char_player_custom",
+        npc_id=dockworker.npc_id,
+        action_type="ASK_WORK"
+    )
+    assert len(work_res.dialogue) > 30
+
+
+
+@pytest.mark.asyncio
 async def test_npc_schedule_and_routine_simulation():
     """Verify simulate_npc_schedules moves NPCs between connected locations according to routine."""
     # Create an NPC at docks whose schedule dictates evening tavern
