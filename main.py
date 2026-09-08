@@ -54,7 +54,7 @@ async def keep_alive_loop():
         try:
             tick += 1
             # 1. Background CPU activity: execute simulation high tick
-            if db_manager.db:
+            if db_manager.db is not None:
                 await simulation_scheduler.tick_high()
                 # Automatically flush database state to disk snapshot
                 await db_manager.save_local_snapshot()

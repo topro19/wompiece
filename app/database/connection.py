@@ -44,17 +44,22 @@ class DatabaseManager:
             return self._db
 
         try:
-            logger.info(f"Connecting to MongoDB at {settings.MONGO_URI} [DB: {settings.MONGO_DB_NAME}]...")
+            masked_uri = self._masked_uri(settings.MONGO_URI)
+            logger.info(f"Connecting to MongoDB at {masked_uri} [DB: {settings.MONGO_DB_NAME}]...")
             self._client = AsyncIOMotorClient(
                 settings.MONGO_URI,
-                serverSelectionTimeoutMS=2000,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
                 uuidRepresentation="standard"
             )
             self._db = self._client[settings.MONGO_DB_NAME]
             # Ping database to verify connection
             await self._client.admin.command("ping")
-            logger.info("Successfully established connection to MongoDB.")
+            logger.info("Successfully established connection to MongoDB Atlas / Cloud.")
             self._is_mock = False
+            # If real database is empty, seed from local disk snapshot
+            if not force_mock and os.path.exists(SNAPSHOT_FILE):
+                await self._seed_from_snapshot()
         except Exception as e:
             logger.warning(f"Could not connect to MongoDB ({e}). Falling back to disk-persisted AsyncMongoMockClient.")
             if AsyncMongoMockClient is not None:
@@ -67,6 +72,40 @@ class DatabaseManager:
                 raise e
 
         return self._db
+
+    def _masked_uri(self, uri: str) -> str:
+        """Masks database credentials in logs for security."""
+        if "@" in uri and "://" in uri:
+            scheme, rest = uri.split("://", 1)
+            creds, host = rest.split("@", 1)
+            user = creds.split(":")[0] if ":" in creds else creds
+            return f"{scheme}://{user}:*****@{host}"
+        return uri
+
+    async def _seed_from_snapshot(self):
+        """Seeds initial collections from local disk snapshot if target database is empty."""
+        if self._db is None or not os.path.exists(SNAPSHOT_FILE):
+            return
+        try:
+            char_count = await self._db.characters.count_documents({})
+            if char_count > 0:
+                return
+            with open(SNAPSHOT_FILE, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+                if not raw:
+                    return
+                data = json_util.loads(raw)
+            total_docs = 0
+            for col_name, docs in data.items():
+                if docs:
+                    existing = await self._db[col_name].count_documents({})
+                    if existing == 0:
+                        await self._db[col_name].insert_many(docs)
+                        total_docs += len(docs)
+            if total_docs > 0:
+                logger.info(f"[DB SEED] Successfully migrated {total_docs} records from local snapshot into MongoDB Atlas.")
+        except Exception as e:
+            logger.warning(f"[DB SEED] Failed to seed snapshot into MongoDB Atlas: {e}")
 
     async def load_local_snapshot(self):
         """Restores database collections from disk snapshot if running in local fallback mode."""
@@ -89,8 +128,8 @@ class DatabaseManager:
             logger.warning(f"[DB PERSISTENCE] Failed to load local disk snapshot: {e}")
 
     async def save_local_snapshot(self):
-        """Serializes current mock database state to local disk so player data survives process restarts."""
-        if not self._is_mock or self._db is None:
+        """Serializes current database state to local disk so player data always has a local backup."""
+        if self._db is None:
             return
         try:
             os.makedirs(os.path.dirname(SNAPSHOT_FILE), exist_ok=True)
@@ -112,14 +151,13 @@ class DatabaseManager:
                 os.replace(tmp_file, SNAPSHOT_FILE)
             else:
                 os.rename(tmp_file, SNAPSHOT_FILE)
-            logger.debug(f"[DB PERSISTENCE] Saved local snapshot with {len(col_names)} collections to {SNAPSHOT_FILE}.")
+            logger.debug(f"[DB PERSISTENCE] Saved local backup snapshot with {len(col_names)} collections to {SNAPSHOT_FILE}.")
         except Exception as e:
             logger.warning(f"[DB PERSISTENCE] Failed to save local disk snapshot: {e}")
 
     async def disconnect(self):
-        """Saves disk snapshot and closes MongoDB connection."""
-        if self._is_mock:
-            await self.save_local_snapshot()
+        """Saves disk snapshot backup and closes MongoDB connection."""
+        await self.save_local_snapshot()
         if self._client:
             self._client.close()
             self._client = None
